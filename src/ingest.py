@@ -12,8 +12,8 @@ from pathlib import Path
 
 import duckdb
 
-from config import (CSV_DIR, DB_PATH, EXTRACT_DELIM, LOOKUP_DELIM, LOOKUP_DIR,
-                    RAW, YEAR)
+from config import (CSV_DIR, DB_PATH, EXTRACT_DELIM, EXTRACT_ESCAPE,
+                    EXTRACT_QUOTE, LOOKUP_DELIM, LOOKUP_DIR, RAW, YEAR)
 
 RESULT_ZIP = "dft_test_result_extracts_{year}.zip"
 ITEM_ZIP = "dft_test_item_extracts_{year}.zip"
@@ -65,6 +65,8 @@ def load(year: int = YEAR) -> None:
         SELECT * FROM read_csv(
             '{results_glob}',
             delim = '{EXTRACT_DELIM}',
+            quote = '{EXTRACT_QUOTE}',
+            escape = '{EXTRACT_ESCAPE}',
             header = true,
             filename = true,
             types = {{
@@ -86,6 +88,8 @@ def load(year: int = YEAR) -> None:
         SELECT * FROM read_csv(
             '{items_glob}',
             delim = '{EXTRACT_DELIM}',
+            quote = '{EXTRACT_QUOTE}',
+            escape = '{EXTRACT_ESCAPE}',
             header = true,
             filename = true,
             types = {{

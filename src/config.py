@@ -18,6 +18,15 @@ YEAR = 2025
 EXTRACT_DELIM = ","
 LOOKUP_DELIM = "|"
 
+# Model names contain commas ("SERIES 1, 80 INCH"), so fields are quoted — and
+# an embedded quote is escaped with a BACKSLASH ("STREETZONE 50 2T 12\\""),
+# not by the RFC-4180 doubling DuckDB's sniffer expects. Left to auto-detect,
+# the sniffer picks an empty quote character and the load fails on the first
+# comma-bearing model name; told to expect RFC quoting, it fails on the first
+# backslash-escaped inch mark. Both are pinned here.
+EXTRACT_QUOTE = '"'
+EXTRACT_ESCAPE = "\\"
+
 # --- Scope decisions, each with a reason ---
 
 # Retests are excluded from the analytical table. RT/PL/PV rows describe a
