@@ -26,9 +26,27 @@ An applied AI system in two layers over a data-engineering pipeline:
   wrong*, constrained to defect rows retrieved from the database. The model has
   no tools, no web access, and no route to any fact outside the retrieved block.
 
-  Served by Google's Gemini API. The grounding does not depend on the provider:
-  retrieval is SQL, the constraint is the system prompt, and responses are
-  cached on disk. Changing vendor touches one file.
+  Served by Google's Gemini API (`gemini-3.6-flash`). The grounding does not
+  depend on the provider: retrieval is SQL, the constraint is the system
+  prompt, and responses are cached on disk. Changing vendor touches one file.
+
+### Does the grounding actually hold?
+
+Tested on a vehicle with **three** recorded tests. The model was given the same
+prompt as any other vehicle, with the thin sample flagged in the data block:
+
+> *"There is not enough data on this vehicle to draw a reliable conclusion about
+> its MOT performance. Only three tests are recorded for eight-year-old Toyota
+> Mark X Zio models, showing a 0.0% failure rate. This sample size falls well
+> below the 100-test threshold required for a dependable figure."*
+
+It refused rather than inventing plausible failure modes — which is the whole
+credibility of this layer. On a well-covered vehicle every figure in the output
+traces back to a row in the data block; no causes, recalls, or reputational
+claims are added.
+
+Response caching is verified: a repeat request for the same vehicle returns in
+**0.4 ms** against **9.8 s** for the API call, byte-identical.
 
 ---
 
@@ -44,6 +62,7 @@ An applied AI system in two layers over a data-engineering pipeline:
 | Pass rate, class 4 (cars) | **72.32%** |
 | Full pipeline runtime | **49 seconds**, one command |
 | App cold load | **0.92 s** to metrics + charts rendered (localhost) |
+| LLM summary, cached | **0.4 ms** vs 9.8 s uncached |
 | DuckDB database | 4.2 GB |
 | Shipped serving layer | **1.5 MB** (~2,800× reduction) |
 

@@ -30,7 +30,7 @@ log = logging.getLogger(__name__)
 
 # Overridable so a quota-limited free tier can be pointed at a smaller model
 # without editing code.
-MODEL = os.environ.get("MOTINTEL_MODEL", "gemini-2.5-flash")
+MODEL = os.environ.get("MOTINTEL_MODEL", "gemini-3.6-flash")
 CACHE_DIR = PROCESSED / "llm_cache"
 
 SYSTEM = """You summarise UK MOT test data for used-car buyers.
@@ -122,7 +122,11 @@ def summarise(profile: VehicleProfile, *, use_cache: bool = True) -> str | None:
                       f"plain-English reliability summary."),
             config=types.GenerateContentConfig(
                 system_instruction=SYSTEM,
-                max_output_tokens=1000,
+                # Generous relative to a three-sentence answer: this model
+                # thinks before replying and the reasoning is drawn from the
+                # same budget, so a tight cap returns an empty string rather
+                # than a short summary.
+                max_output_tokens=2048,
                 # Zero temperature: this is a reporting task over supplied
                 # figures, and sampling variety buys nothing but drift away
                 # from the numbers.
@@ -144,6 +148,7 @@ def summarise(profile: VehicleProfile, *, use_cache: bool = True) -> str | None:
         log.warning("could not reach Gemini (%s) — serving without a summary", e)
         return None
 
+    usage = response.usage_metadata
     summary = (response.text or "").strip()
     if not summary:
         # A safety filter or an empty candidate list, not an exception.
@@ -155,8 +160,14 @@ def summarise(profile: VehicleProfile, *, use_cache: bool = True) -> str | None:
         "data_block": data,
         "summary": summary,
         "model": MODEL,
-        "usage": {"input_tokens": response.usage.input_tokens,
-                  "output_tokens": response.usage.output_tokens},
+        "usage": {
+            "input_tokens": getattr(usage, "prompt_token_count", None),
+            "output_tokens": getattr(usage, "candidates_token_count", None),
+            # Reasoning tokens are billed and drawn from the same output
+            # budget, so they belong in the record even though they are
+            # never shown.
+            "thinking_tokens": getattr(usage, "thoughts_token_count", None),
+        },
     }, indent=2))
     return summary
 
