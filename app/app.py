@@ -11,13 +11,20 @@ from pathlib import Path
 
 import polars as pl
 import streamlit as st
+from dotenv import load_dotenv
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "src"))
+
+# Streamlit runs as its own process and inherits nothing from the shell that
+# ran the pipeline, so the API key has to be read here or the summary panel
+# reports "no key configured" against a perfectly good .env.
+load_dotenv(ROOT / ".env")
 
 import llm  # noqa: E402
 from queries import MIN_TESTS_FOR_CONFIDENCE, VehicleProfile  # noqa: E402
 
-DATA = Path(__file__).resolve().parent.parent / "data" / "processed"
+DATA = ROOT / "data" / "processed"
 
 st.set_page_config(page_title="MOTIntel", page_icon="🚗", layout="wide")
 

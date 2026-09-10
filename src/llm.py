@@ -32,6 +32,7 @@ log = logging.getLogger(__name__)
 # without editing code.
 MODEL = os.environ.get("MOTINTEL_MODEL", "gemini-3.6-flash")
 CACHE_DIR = PROCESSED / "llm_cache"
+REQUEST_TIMEOUT_MS = int(os.environ.get("MOTINTEL_TIMEOUT_MS", "30000"))
 
 SYSTEM = """You summarise UK MOT test data for used-car buyers.
 
@@ -115,7 +116,11 @@ def summarise(profile: VehicleProfile, *, use_cache: bool = True) -> str | None:
 
     data = _render(profile)
     try:
-        client = genai.Client()
+        # A request with no ceiling is not graceful degradation: without this
+        # the app spins on a hung connection instead of falling back to the
+        # charts. Measured calls land near 10s, so 30s is generous.
+        client = genai.Client(
+            http_options=types.HttpOptions(timeout=REQUEST_TIMEOUT_MS))
         response = client.models.generate_content(
             model=MODEL,
             contents=(f"DATA:\n{data}\n\nWrite a three-sentence "
