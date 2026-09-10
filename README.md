@@ -14,6 +14,8 @@ still built as though it were deploying — 1.5 MB of pre-aggregated Parquet, th
 app with no access to the database — because that separation is the point, not
 the URL.
 
+![MOTIntel dashboard](docs/dashboard-dark.png)
+
 ---
 
 ## What it does
@@ -251,6 +253,9 @@ The LLM layer needs `GEMINI_API_KEY` in `.env` (get one free at
 [aistudio.google.com](https://aistudio.google.com/apikey)). Without it the app
 runs and says the summary is unavailable — it never breaks. Set
 `MOTINTEL_MODEL` to override the default model.
+
+The app opens dark; `?theme=light` on the URL selects the other theme on a cold
+load, which is also how the screenshots above are captured reproducibly.
 
 ---
 

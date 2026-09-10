@@ -77,7 +77,12 @@ def style_fig(fig: go.Figure, p: dict, height: int = 300) -> go.Figure:
 # updated when the script re-runs, so reading it up here is correct and needs
 # no manual rerun — driving it with st.rerun() instead fights Streamlit's own
 # widget state and the switch silently refuses to move.
-light = st.session_state.get("light_mode", False)
+# ?theme=light selects the theme on a cold load, so a particular view can be
+# linked or screenshotted without clicking anything. The switch still wins
+# once someone touches it, since its state is what is read here.
+if "light_mode" not in st.session_state:
+    st.session_state["light_mode"] = st.query_params.get("theme") == "light"
+light = st.session_state["light_mode"]
 p = th.palette("light" if light else "dark")
 st.markdown(th.css(p), unsafe_allow_html=True)
 
