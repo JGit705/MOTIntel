@@ -84,6 +84,9 @@ def quality_report(con: duckdb.DuckDBPyConnection) -> None:
 
     raw_n = con.execute("SELECT count(*) FROM raw_tests").fetchone()[0]
     ana_n = con.execute("SELECT count(*) FROM analytical_tests").fetchone()[0]
+    if not raw_n or not ana_n:
+        print("\n  no rows to report on — the load produced an empty table.")
+        return
     print(f"\nraw test rows            {raw_n:>14,}")
     print(f"analytical test rows     {ana_n:>14,}   "
           f"({ana_n / raw_n:.1%} retained)")

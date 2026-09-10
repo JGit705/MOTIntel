@@ -12,10 +12,14 @@ from __future__ import annotations
 import duckdb
 
 from config import CAR_TEST_CLASS, DB_PATH, PROCESSED
-from queries import MIN_TESTS_FOR_CONFIDENCE
 
 # Any cell thinner than this is dropped rather than shipped. It would be too
 # noisy to display, and dropping it keeps the artefact small.
+#
+# The app's selection list is derived from these exports rather than from a
+# separate model list: a vehicle is offered only if the panels can actually be
+# drawn for it. A standalone list with a different threshold put 134 models in
+# the dropdown that dead-ended on a warning.
 MIN_CELL = 30
 
 
@@ -57,7 +61,16 @@ def export() -> None:
             ),
             ranked AS (
                 SELECT s.make, s.model, s.age_band,
-                       d.defect_category, d.defect_desc,
+                       -- 0.34% of defect codes are absent from the lookup
+                       -- tables. The analytical table keeps them NULL, which
+                       -- is the honest record; labelling happens here, at the
+                       -- presentation boundary, so the app never renders
+                       -- "None is the most common problem".
+                       coalesce(d.defect_category, 'Unclassified')
+                           AS defect_category,
+                       coalesce(d.defect_desc,
+                                'defect code not present in the DVSA lookup '
+                                || 'tables') AS defect_desc,
                        count(DISTINCT s.test_id) AS n_tests,
                        row_number() OVER (
                            PARTITION BY s.make, s.model, s.age_band
@@ -73,18 +86,6 @@ def export() -> None:
             FROM ranked r JOIN totals t USING (make, model, age_band)
             WHERE r.rk <= 10
         ) TO '{PROCESSED / "top_defects.parquet"}' (FORMAT parquet, COMPRESSION zstd)
-    """)
-
-    print("exporting model volumes for the selection controls")
-    con.execute(f"""
-        COPY (
-            SELECT make, model, count(*) AS n_tests,
-                   avg(CASE WHEN failed THEN 1.0 ELSE 0.0 END) AS failure_rate
-            FROM analytical_tests
-            WHERE test_class_id = '{CAR_TEST_CLASS}'
-              AND make IS NOT NULL AND model IS NOT NULL
-            GROUP BY 1, 2 HAVING count(*) >= {MIN_TESTS_FOR_CONFIDENCE}
-        ) TO '{PROCESSED / "models.parquet"}' (FORMAT parquet, COMPRESSION zstd)
     """)
 
     # Age curve per model. Built without the mileage split so it keeps rows

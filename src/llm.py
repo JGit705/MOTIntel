@@ -70,7 +70,9 @@ no preamble — just the paragraph."""
 def _render(profile: VehicleProfile) -> str:
     """Render the retrieved rows as the model's entire world."""
     p, lines = profile, []
-    lines.append(f"Vehicle: {p.make} {p.model}, {p.age_years} years old")
+    age = (f"{p.age_band[0]}-{p.age_band[1]} years old" if p.age_band
+           else f"{p.age_years} years old")
+    lines.append(f"Vehicle: {p.make} {p.model}, {age}")
     lines.append(f"Tests in this make/model/age group: {p.n_tests:,}")
     if p.failure_rate is not None:
         lines.append(f"Failure rate for this group: {p.failure_rate:.1%}")

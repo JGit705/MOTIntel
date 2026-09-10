@@ -88,7 +88,6 @@ with st.sidebar:
          f'42.7 million tests · 35.4 million after cleaning</div>')
 
 try:
-    models = load("models.parquet")
     rates = load("failure_rates.parquet")
     defects = load("top_defects.parquet")
     age_curve = load("age_curve.parquet")
@@ -102,6 +101,21 @@ except FileNotFoundError:
 # ---------------------------------------------------------------------------
 # selection + derived figures
 # ---------------------------------------------------------------------------
+# Only offer vehicles the page can actually render. models.parquet admitted
+# anything with 100 tests in total, but the page is driven by age_curve, which
+# needs 30 in a single band — so 134 models sat in the dropdown and dead-ended
+# on a warning. The selectable set is the intersection of every export a
+# vehicle needs, which is the only honest definition of "in the database".
+@st.cache_data
+def selectable_vehicles() -> pl.DataFrame:
+    usable = (age_curve.group_by("make", "model")
+              .agg(n_tests=pl.col("n_tests").sum()))
+    return (usable.join(meta.select("make", "model"), on=["make", "model"])
+            .sort("n_tests", descending=True))
+
+
+selectable = selectable_vehicles()
+makes = sorted(selectable["make"].unique().to_list())
 hero_col, ctrl_col = st.columns([3, 2])
 
 with ctrl_col:
@@ -110,8 +124,8 @@ with ctrl_col:
     # into its own container rather than into the open tag.
     with st.container(border=True):
         a, b = st.columns(2)
-        make = a.selectbox("Make", sorted(models["make"].unique().to_list()))
-        model_options = (models.filter(pl.col("make") == make)
+        make = a.selectbox("Make", makes)
+        model_options = (selectable.filter(pl.col("make") == make)
                          .sort("n_tests", descending=True)["model"].to_list())
         model = b.selectbox("Model", model_options)
 
@@ -138,9 +152,6 @@ with ctrl_col:
 row = this_model.filter(pl.col("age_band") == age_band)
 n_tests = int(row["n_tests"][0])
 failure_rate = float(row["failure_rate"][0])
-cells = rates.filter((pl.col("make") == make) & (pl.col("model") == model)
-                     & (pl.col("age_band") == age_band))
-
 bench_row = benchmark.filter(pl.col("age_band") == age_band)
 bench = float(bench_row["failure_rate"][0]) if not bench_row.is_empty() else None
 peers_same_age = age_curve.filter(pl.col("age_band") == age_band)
@@ -195,7 +206,8 @@ if len(mrows) > 2:
                      mrows[-1]["failure_rate"], mile_labels[-1])
 
 profile = VehicleProfile(
-    make=make, model=model, age_years=age_band + 1, n_tests=n_tests,
+    make=make, model=model, age_years=age_band + 1,
+    age_band=(age_band, age_band + 3), n_tests=n_tests,
     failure_rate=failure_rate,
     top_defects=top.rename({"defect_category": "category",
                             "defect_desc": "defect"}).to_dicts(),
@@ -246,8 +258,8 @@ def panel_probability() -> None:
                             config={"displayModeBar": False})
         with right:
             html(c.stat(f"{n_tests:,}", "MOT tests analysed", "doc", p["accent"])
-                 + c.stat(f"{age_band + 1} years", "vehicle age at test", "clock",
-                          p["accent"])
+                 + c.stat(f"{age_band}–{age_band + 3} yrs",
+                          "vehicle age at test", "clock", p["accent"])
                  + c.stat(f"{bench:.1%}" if bench else "—",
                           "average for vehicles of this age", "check", p["teal"]))
         if percentile is not None:
@@ -300,8 +312,10 @@ def panel_summary() -> None:
 
 def panel_defects(limit: int = 5) -> None:
     with st.container(border=True):
-        html(c.card_header("Top failure reasons", "list", p["accent"],
-                         action="" if limit > 5 else "Top 5 of 10"))
+        shown, total = min(limit, len(top)), len(top)
+        html(c.card_header(
+            "Top failure reasons", "list", p["accent"],
+            action="" if shown >= total else f"Top {shown} of {total}"))
         if top.is_empty():
             html('<div style="color:var(--muted);font-size:13px">No defect '
                  'breakdown for this group.</div>')
@@ -332,6 +346,14 @@ def panel_mileage() -> None:
         html(c.card_header("How reliability changes with mileage", "trend",
                          p["teal"], pill="All ages of this model"))
         vals = by_mileage["failure_rate"].to_list()
+        # Some vehicles carry no odometer readings at all — every band fell
+        # under the export threshold. Annotating the worst of nothing raised
+        # ValueError and took the whole page down with it.
+        if not vals:
+            html('<div style="color:var(--muted);font-size:13px">No odometer '
+                 'readings recorded for this model in large enough groups to '
+                 'chart. The figures above are unaffected.</div>')
+            return
         fig = go.Figure()
         fig.add_trace(go.Bar(
             x=mile_labels, y=vals, marker_color=p["accent"],
@@ -490,9 +512,13 @@ def panel_insights() -> None:
                           ["share_of_tests"].sum())
             out.append(c.insight(
                 f"{cat} is the most common problem",
-                f"Accounts for {share:.1%} of all tests in this age group, across "
-                f"{int(top.filter(pl.col('defect_category') == cat).height)} "
-                f"distinct defect types.", "list", p["accent"], p["accent_soft"]))
+                # The count comes from the top-ten table, so it is a share of
+                # those ten rather than of every defect type recorded. Saying
+                # "distinct defect types" implied the latter.
+                f"Accounts for {share:.1%} of all tests in this age group, "
+                f"across {int(top.filter(pl.col('defect_category') == cat).height)}"
+                f" of the ten most common defects.", "list", p["accent"],
+                p["accent_soft"]))
         if mile_jump:
             band, rate, step, worst_rate, worst_band = mile_jump
             out.append(c.insight(
@@ -506,7 +532,7 @@ def panel_insights() -> None:
                 f"Compared against {len(peers_same_age):,} models with enough "
                 f"tests at {age_band}–{age_band + 3} years.", "car", p["teal"],
                 "var(--panel2)"))
-        if sparse := n_tests < MIN_TESTS_FOR_CONFIDENCE:
+        if n_tests < MIN_TESTS_FOR_CONFIDENCE:
             out.append(c.insight(
                 "Treat these figures with caution",
                 f"Only {n_tests} tests in this group, below the "

@@ -12,11 +12,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-import duckdb
-
 from config import CAR_TEST_CLASS
 
-AGE_BANDS = [(0, 3), (3, 6), (6, 10), (10, 15), (15, 100)]
+# Three-year bands, matching src/export.py exactly. They used to differ, which
+# meant the same vehicle produced one failure rate here and a different one in
+# the app — the sort of quiet disagreement that destroys trust in a number.
+AGE_BANDS = [(lo, lo + 3) for lo in range(0, 30, 3)]
 MILEAGE_BANDS = [(0, 20_000), (20_000, 50_000), (50_000, 80_000),
                  (80_000, 120_000), (120_000, 500_000)]
 
@@ -34,6 +35,10 @@ class VehicleProfile:
     age_years: int
     n_tests: int
     failure_rate: float | None
+    # The band the figures actually describe. Without it the summary calls a
+    # 6-9 year band "seven years old", which is precise about something the
+    # data never claimed.
+    age_band: tuple[int, int] | None = None
     top_defects: list[dict] = field(default_factory=list)
     by_mileage: list[dict] = field(default_factory=list)
     peers: list[dict] = field(default_factory=list)
@@ -72,7 +77,9 @@ def top_defects(con, make: str, model: str, age_years: int, limit: int = 10):
             WHERE test_class_id = ? AND make = ? AND model = ?
               AND vehicle_age_years >= ? AND vehicle_age_years < ?
         )
-        SELECT d.defect_category, d.defect_desc,
+        SELECT coalesce(d.defect_category, 'Unclassified'),
+               coalesce(d.defect_desc,
+                        'defect code not present in the DVSA lookup tables'),
                count(DISTINCT d.test_id) AS n,
                count(DISTINCT d.test_id) * 1.0 / (SELECT count(*) FROM scope)
         FROM analytical_defects d

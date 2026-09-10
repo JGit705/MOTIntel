@@ -7,8 +7,6 @@ trustworthy and nothing else in the app matters.
 """
 from __future__ import annotations
 
-import sys
-
 import duckdb
 from dotenv import load_dotenv
 
