@@ -85,8 +85,14 @@ st.subheader("What this means")
 top = (defects.filter((pl.col("make") == make) & (pl.col("model") == model)
                       & (pl.col("age_band") == age_band))
        .sort("n_tests", descending=True).head(10))
+# Band labels are zero-padded ("020k", not "20000"). Streamlit orders a
+# chart's categorical axis alphabetically, so bare numbers come out as
+# 100000, 120000, 20000, 200000, 40000 — which reorders the bars and makes
+# a clean mileage gradient look like noise. Zero-padding sorts correctly.
 by_mileage = (cells.sort("mileage_band")
               .select(mileage_band=pl.col("mileage_band"),
+                      miles=pl.format("{}k", (pl.col("mileage_band") // 1000)
+                                      .cast(pl.Utf8).str.pad_start(3, "0")),
                       n_tests=pl.col("n_tests"),
                       failure_rate=pl.col("failure_rate")))
 
@@ -99,7 +105,7 @@ else:
             make, model, age, n_tests, failure_rate,
             top.rename({"defect_category": "category",
                         "defect_desc": "defect"}).to_dicts(),
-            [{"mileage_band": f"{r['mileage_band'] // 1000}k",
+            [{"mileage_band": r["miles"],
               "n_tests": r["n_tests"], "failure_rate": r["failure_rate"]}
              for r in by_mileage.to_dicts()])
     if summary:
@@ -118,16 +124,21 @@ with left:
     if top.is_empty():
         st.caption("No defect breakdown for this group.")
     else:
-        st.bar_chart(
-            top.select(pl.col("defect_desc").alias("defect"),
-                       pl.col("share_of_tests").alias("share of tests"))
-               .to_pandas().set_index("defect"))
+        # Same alphabetical-axis problem: rank-prefixing keeps the bars in
+        # frequency order instead of A-Z.
+        ranked = (top.with_row_index("rk")
+                  .select(defect=pl.format(
+                      "{}. {}: {}", (pl.col("rk") + 1).cast(pl.Utf8)
+                      .str.pad_start(2, "0"), pl.col("defect_category"),
+                      pl.col("defect_desc")),
+                      share=pl.col("share_of_tests")))
+        st.bar_chart(ranked.to_pandas().set_index("defect"),
+                     horizontal=True)
 with right:
     st.subheader("Failure rate by mileage")
     st.bar_chart(
-        by_mileage.select(
-            pl.col("mileage_band").cast(pl.Utf8).alias("miles"),
-            pl.col("failure_rate").alias("failure rate"))
+        by_mileage.select(pl.col("miles"),
+                          pl.col("failure_rate").alias("failure rate"))
         .to_pandas().set_index("miles"))
 
 # --- FR5.5 peers -----------------------------------------------------------
@@ -139,7 +150,7 @@ peers = (rates.filter((pl.col("age_band") == age_band)
               failure_rate=(pl.col("failure_rate") * pl.col("n_tests")).sum()
                            / pl.col("n_tests").sum())
          .sort("n_tests", descending=True).head(5))
-st.dataframe(peers.to_pandas(), hide_index=True, use_container_width=True)
+st.dataframe(peers.to_pandas(), hide_index=True, width='stretch')
 
 # --- FR5.7 provenance ------------------------------------------------------
 st.divider()
