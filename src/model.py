@@ -15,7 +15,7 @@ import polars as pl
 from sklearn.calibration import calibration_curve
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import brier_score_loss, roc_auc_score
-from sklearn.preprocessing import OneHotEncoder
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from xgboost import XGBClassifier
 
 from config import CAR_TEST_CLASS, DB_PATH, PROCESSED
@@ -57,7 +57,7 @@ def baseline(con, test: pl.DataFrame) -> np.ndarray:
         FROM analytical_tests
         WHERE test_class_id = '{CAR_TEST_CLASS}' AND test_date < DATE '{TRAIN_END}'
           AND make IS NOT NULL AND model IS NOT NULL
-        GROUP BY 1, 2 HAVING count(*) >= 30
+        GROUP BY 1, 2, 3 HAVING count(*) >= 30
     """).pl()
     overall = con.execute(f"""
         SELECT avg(CASE WHEN failed THEN 1.0 ELSE 0.0 END) FROM analytical_tests
@@ -85,9 +85,17 @@ def featurise(train: pl.DataFrame, test: pl.DataFrame, top_models: list[str]):
     Xc_tr = enc.fit_transform(train.select(cat_cols).to_pandas())
     Xc_te = enc.transform(test.select(cat_cols).to_pandas())
 
+    # Numeric features are standardised. Odometer runs to 500,000 while age
+    # runs to 40, and on that scale lbfgs does not converge in any sane number
+    # of iterations — the unscaled logistic regression stopped at the limit and
+    # came out worse calibrated than the group-by it was meant to improve on.
+    # Trees are invariant to monotonic rescaling, so XGBoost is unaffected.
     from scipy.sparse import csr_matrix, hstack
-    Xn_tr = csr_matrix(np.nan_to_num(train.select(num_cols).to_numpy()))
-    Xn_te = csr_matrix(np.nan_to_num(test.select(num_cols).to_numpy()))
+    scaler = StandardScaler()
+    Xn_tr = csr_matrix(scaler.fit_transform(
+        np.nan_to_num(train.select(num_cols).to_numpy())))
+    Xn_te = csr_matrix(scaler.transform(
+        np.nan_to_num(test.select(num_cols).to_numpy())))
     return (hstack([Xc_tr, Xn_tr]).tocsr(), hstack([Xc_te, Xn_te]).tocsr())
 
 
