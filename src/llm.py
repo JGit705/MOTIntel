@@ -7,6 +7,10 @@ data block, the model has no route to it.
 
 The prompt then does the second half of the job — telling the model to refuse
 when the data is thin, which is what the Phase 5 sparse-data test checks.
+
+Served by Google's Gemini API. Nothing about the grounding depends on the
+provider: the retrieval is SQL, the constraint is the system prompt, and the
+cache is on disk. Swapping the model vendor changes this file and nothing else.
 """
 from __future__ import annotations
 
@@ -15,16 +19,18 @@ import json
 import logging
 import os
 from dataclasses import asdict
-from pathlib import Path
 
-import anthropic
+from google import genai
+from google.genai import errors, types
 
 from config import PROCESSED
 from queries import MIN_TESTS_FOR_CONFIDENCE, VehicleProfile
 
 log = logging.getLogger(__name__)
 
-MODEL = "claude-opus-5"
+# Overridable so a quota-limited free tier can be pointed at a smaller model
+# without editing code.
+MODEL = os.environ.get("MOTINTEL_MODEL", "gemini-2.5-flash")
 CACHE_DIR = PROCESSED / "llm_cache"
 
 SYSTEM = """You summarise UK MOT test data for used-car buyers.
@@ -109,34 +115,40 @@ def summarise(profile: VehicleProfile, *, use_cache: bool = True) -> str | None:
 
     data = _render(profile)
     try:
-        client = anthropic.Anthropic()
-        response = client.messages.create(
+        client = genai.Client()
+        response = client.models.generate_content(
             model=MODEL,
-            max_tokens=1000,
-            system=SYSTEM,
-            messages=[{"role": "user", "content":
-                       f"DATA:\n{data}\n\nWrite a three-sentence "
-                       f"plain-English reliability summary."}],
+            contents=(f"DATA:\n{data}\n\nWrite a three-sentence "
+                      f"plain-English reliability summary."),
+            config=types.GenerateContentConfig(
+                system_instruction=SYSTEM,
+                max_output_tokens=1000,
+                # Zero temperature: this is a reporting task over supplied
+                # figures, and sampling variety buys nothing but drift away
+                # from the numbers.
+                temperature=0.0,
+            ),
         )
-    except anthropic.AuthenticationError:
-        log.warning("no valid Anthropic credentials — LLM layer disabled")
+    except errors.ClientError as e:
+        # 4xx — bad or missing key, or the free tier's quota is spent.
+        log.warning("Gemini rejected the request (%s) — serving without a "
+                    "summary", getattr(e, "code", "4xx"))
         return None
-    except anthropic.RateLimitError:
-        log.warning("rate limited — serving without a summary")
+    except errors.ServerError:
+        log.warning("Gemini unavailable — serving without a summary")
         return None
-    except anthropic.APIStatusError as e:
-        log.warning("Claude API returned %s — serving without a summary",
-                    e.status_code)
+    except errors.APIError as e:
+        log.warning("Gemini API error (%s) — serving without a summary", e)
         return None
-    except anthropic.APIConnectionError:
-        log.warning("could not reach the Claude API — serving without a summary")
-        return None
-
-    if response.stop_reason == "refusal":
-        log.warning("request declined: %s", response.stop_details)
+    except Exception as e:  # network failures surface as plain exceptions
+        log.warning("could not reach Gemini (%s) — serving without a summary", e)
         return None
 
-    summary = "".join(b.text for b in response.content if b.type == "text").strip()
+    summary = (response.text or "").strip()
+    if not summary:
+        # A safety filter or an empty candidate list, not an exception.
+        log.warning("Gemini returned no text — serving without a summary")
+        return None
     cached.write_text(json.dumps({
         "vehicle": asdict(profile) | {"top_defects": [], "by_mileage": [],
                                       "peers": []},
@@ -151,7 +163,6 @@ def summarise(profile: VehicleProfile, *, use_cache: bool = True) -> str | None:
 
 def credentials_available() -> bool:
     """Used by the app to show an honest 'AI summary unavailable' notice
-    instead of a spinner that goes nowhere."""
-    if os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN"):
-        return True
-    return (Path.home() / ".config" / "anthropic").exists()
+    instead of a spinner that goes nowhere. google-genai reads either name."""
+    return bool(os.environ.get("GEMINI_API_KEY")
+                or os.environ.get("GOOGLE_API_KEY"))

@@ -3,6 +3,6 @@ polars>=1.0
 xgboost>=2.1
 scikit-learn>=1.5
 streamlit>=1.39
-anthropic>=0.40
+google-genai>=2.0
 python-dotenv>=1.0
 pyarrow>=17.0
