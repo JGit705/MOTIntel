@@ -1,5 +1,7 @@
 """Smoke-test the real app over a sample of vehicles.
 
+Run from the repository root:  python -m tests.test_app_smoke
+
 The previous harness re-implemented the app's derivations and therefore only
 tested the lines it happened to copy — it computed the mileage values but not
 the labels built from them, which is exactly where the null-band crash lived.
@@ -15,7 +17,7 @@ import polars as pl
 from streamlit.testing.v1 import AppTest
 
 ROOT = Path(__file__).resolve().parent.parent
-APP = ROOT / "app" / "app.py"
+APP = ROOT / "motintel_app.py"
 DATA = ROOT / "data" / "processed"
 
 

@@ -1,0 +1,16 @@
+Metadata-Version: 2.4
+Name: motintel
+Version: 1.0.0
+Summary: UK vehicle reliability intelligence from DVSA open MOT data
+Requires-Python: >=3.11
+Requires-Dist: duckdb>=1.5.5
+Requires-Dist: polars>=1.44.2
+Requires-Dist: xgboost>=3.4.1
+Requires-Dist: scikit-learn>=1.9.0
+Requires-Dist: streamlit>=1.63.0
+Requires-Dist: google-genai>=2.22.0
+Requires-Dist: python-dotenv>=1.2.3
+Requires-Dist: pyarrow>=25.0.1
+Requires-Dist: plotly>=7.0.0
+Requires-Dist: numpy>=2.5.3
+Requires-Dist: scipy>=1.18.1

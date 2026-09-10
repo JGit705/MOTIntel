@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import duckdb
 
-from config import CAR_TEST_CLASS, DB_PATH, PROCESSED
+from motintel.config import CAR_TEST_CLASS, DB_PATH, PROCESSED
 
 # Any cell thinner than this is dropped rather than shipped. It would be too
 # noisy to display, and dropping it keeps the artefact small.

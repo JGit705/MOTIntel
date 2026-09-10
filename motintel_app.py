@@ -1,6 +1,6 @@
-"""FR5 — the serving layer.
+"""FR5 — the serving layer.  Run with: streamlit run motintel_app.py
 
-Reads only the pre-aggregated Parquet exported by src/export.py. There is no
+Reads only the pre-aggregated Parquet exported by motintel/export.py. There is no
 DuckDB file here and no raw data: the app displays numbers computed offline,
 plus one on-demand call to the LLM layer.
 
@@ -10,7 +10,7 @@ the page stays honest and useful with the LLM layer switched off entirely.
 """
 from __future__ import annotations
 
-import sys
+from html import escape
 from pathlib import Path
 
 import plotly.graph_objects as go
@@ -18,30 +18,21 @@ import polars as pl
 import streamlit as st
 from dotenv import load_dotenv
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "src"))
-sys.path.insert(0, str(ROOT / "app"))
+from motintel import llm, serving
+from motintel.queries import MIN_TESTS_FOR_CONFIDENCE
+from motintel.ui import components as c
+from motintel.ui import theme as th
+
+ROOT = Path(__file__).resolve().parent
 
 # Streamlit runs as its own process and inherits nothing from the shell that
 # ran the pipeline, so the API key is read here or the summary panel reports
 # "no key configured" against a perfectly good .env.
 load_dotenv(ROOT / ".env")
 
-import components as c  # noqa: E402
-import llm  # noqa: E402
-import theme as th  # noqa: E402
-from queries import MIN_TESTS_FOR_CONFIDENCE, VehicleProfile  # noqa: E402
-
-DATA = ROOT / "data" / "processed"
-MILEAGE_CAP = 160_000          # everything above is pooled into "160k+"
 
 st.set_page_config(page_title="MOTIntel", page_icon="🚗", layout="wide",
                    initial_sidebar_state="expanded")
-
-
-@st.cache_data
-def load(name: str) -> pl.DataFrame:
-    return pl.read_parquet(DATA / name)
 
 
 def style_fig(fig: go.Figure, p: dict, height: int) -> go.Figure:
@@ -88,33 +79,21 @@ with st.sidebar:
          f'42.7 million tests · 35.4 million after cleaning</div>')
 
 try:
-    rates = load("failure_rates.parquet")
-    defects = load("top_defects.parquet")
-    age_curve = load("age_curve.parquet")
-    benchmark = load("benchmark.parquet")
-    severity = load("severity.parquet")
-    meta = load("vehicle_meta.parquet")
-except FileNotFoundError:
-    st.error("Serving data not found. Run `python src/export.py` first.")
+    T = serving.tables()
+except FileNotFoundError as e:
+    st.error(f"{e}")
     st.stop()
+
+rates, defects = T["failure_rates"], T["top_defects"]
+age_curve, benchmark = T["age_curve"], T["benchmark"]
+severity, meta = T["severity"], T["vehicle_meta"]
 
 # ---------------------------------------------------------------------------
 # selection + derived figures
 # ---------------------------------------------------------------------------
-# Only offer vehicles the page can actually render. models.parquet admitted
-# anything with 100 tests in total, but the page is driven by age_curve, which
-# needs 30 in a single band — so 134 models sat in the dropdown and dead-ended
-# on a warning. The selectable set is the intersection of every export a
-# vehicle needs, which is the only honest definition of "in the database".
-@st.cache_data
-def selectable_vehicles() -> pl.DataFrame:
-    usable = (age_curve.group_by("make", "model")
-              .agg(n_tests=pl.col("n_tests").sum()))
-    return (usable.join(meta.select("make", "model"), on=["make", "model"])
-            .sort("n_tests", descending=True))
-
-
-selectable = selectable_vehicles()
+# The selectable set, the age bands and the profile all come from
+# motintel.serving, so the page and the summary cannot drift apart.
+selectable = serving.selectable_vehicles()
 makes = sorted(selectable["make"].unique().to_list())
 hero_col, ctrl_col = st.columns([3, 2])
 
@@ -135,7 +114,7 @@ with ctrl_col:
         this_model = (age_curve.filter((pl.col("make") == make)
                                        & (pl.col("model") == model))
                       .sort("age_band"))
-        bands = this_model["age_band"].to_list()
+        bands = serving.age_bands(make, model)
         if not bands:
             st.warning(f"No {make} {model} tests in this dataset.")
             st.stop()
@@ -149,9 +128,15 @@ with ctrl_col:
                 value=bands[min(len(bands) - 1, len(bands) // 2)],
                 format_func=lambda x: f"{x}–{x + 3} yrs")
 
+# One profile, built by motintel.serving, shared by the page and the model.
+# Anything absent from it is unreachable by the summary, and every figure below
+# is read off the same object the model is given.
+profile = serving.build_profile(make, model, age_band)
+sparse = serving.is_sparse(profile)
+
 row = this_model.filter(pl.col("age_band") == age_band)
-n_tests = int(row["n_tests"][0])
-failure_rate = float(row["failure_rate"][0])
+n_tests = profile.n_tests
+failure_rate = profile.failure_rate
 bench_row = benchmark.filter(pl.col("age_band") == age_band)
 bench = float(bench_row["failure_rate"][0]) if not bench_row.is_empty() else None
 peers_same_age = age_curve.filter(pl.col("age_band") == age_band)
@@ -176,25 +161,20 @@ yr_from = int(mrow["year_from"][0]) if not mrow.is_empty() else None
 yr_to = int(mrow["year_to"][0]) if not mrow.is_empty() else None
 avg_age = float(mrow["avg_age"][0]) if not mrow.is_empty() else None
 
-top = (defects.filter((pl.col("make") == make) & (pl.col("model") == model)
-                      & (pl.col("age_band") == age_band))
-       .sort("n_tests", descending=True).head(10))
+# The profile carries the defect rows under the names the model reads them by;
+# the panels want their column names, so map rather than re-query.
+DEFECT_SCHEMA = {"defect_category": pl.Utf8, "defect_desc": pl.Utf8,
+                 "n_tests": pl.Int64, "share_of_tests": pl.Float64}
+top = (pl.DataFrame(profile.top_defects)
+       .rename({"category": "defect_category", "defect": "defect_desc"})
+       if profile.top_defects else pl.DataFrame(schema=DEFECT_SCHEMA))
 
 # Mileage bands, with everything past the cap pooled so the tail does not
 # become a row of single-test noise.
 # drop_nulls is belt-and-braces: the export no longer emits a null band, but a
 # stale Parquet from an older run should degrade rather than crash the page.
-by_mileage = (rates.filter((pl.col("make") == make) & (pl.col("model") == model))
-              .drop_nulls("mileage_band")
-              .with_columns(band=pl.when(pl.col("mileage_band") >= MILEAGE_CAP)
-                            .then(MILEAGE_CAP).otherwise(pl.col("mileage_band")))
-              .group_by("band")
-              .agg(n_tests=pl.col("n_tests").sum(),
-                   failure_rate=(pl.col("failure_rate") * pl.col("n_tests")).sum()
-                   / pl.col("n_tests").sum())
-              .sort("band"))
-mile_labels = [f"{int(b) // 1000}k+" if b >= MILEAGE_CAP else f"{int(b) // 1000}k"
-               for b in by_mileage["band"].to_list()]
+by_mileage = serving.mileage_curve(make, model)
+mile_labels = [serving.mileage_label(b) for b in by_mileage["band"].to_list()]
 
 # The steepest step between consecutive mileage bands — the point at which
 # this model starts costing money.
@@ -207,16 +187,6 @@ if len(mrows) > 2:
     if step > 0.02:
         mile_jump = (mile_labels[idx], mrows[idx]["failure_rate"], step,
                      mrows[-1]["failure_rate"], mile_labels[-1])
-
-profile = VehicleProfile(
-    make=make, model=model, age_years=age_band + 1,
-    age_band=(age_band, age_band + 3), n_tests=n_tests,
-    failure_rate=failure_rate,
-    top_defects=top.rename({"defect_category": "category",
-                            "defect_desc": "defect"}).to_dicts(),
-    by_mileage=[{"mileage_band": lb, "n_tests": r["n_tests"],
-                 "failure_rate": r["failure_rate"]}
-                for lb, r in zip(mile_labels, mrows)])
 
 SEV = {"Dangerous": (p["bad"], p["bad_soft"]), "Major": (p["warn"], p["warn_soft"])}
 
@@ -244,7 +214,7 @@ def panel_hero() -> None:
 
 def panel_probability() -> None:
     with st.container(border=True):
-        html(c.card_header("Failure probability", "gauge", tone,
+        html(c.card_header("Observed failure rate", "gauge", tone,
                          pill=f"{age_band}–{age_band + 3} years"))
         left, right = st.columns([1, 1])
         with left:
@@ -267,8 +237,9 @@ def panel_probability() -> None:
                           "average for vehicles of this age", "check", p["teal"]))
         if percentile is not None:
             html(f'<div style="font-size:12px;color:var(--muted);margin-top:4px">'
-                 f'Fails less often than <b>{percentile}%</b> of models this age.'
-                 f'</div>')
+                 f'What actually happened to {n_tests:,} real cars — not a '
+                 f'prediction. Fails less often than <b>{percentile}%</b> of '
+                 f'models this age.</div>')
 
 
 def panel_summary() -> None:
@@ -277,7 +248,10 @@ def panel_summary() -> None:
                          pill="Powered by Gemini"))
         existing = llm.cached_summary(profile)
         if existing:
-            html(f'<div class="sum"><p>{existing}</p></div>')
+            # The model's text is escaped, not trusted. It is the one string
+            # on this page that neither we nor the data authored, and a
+            # prompt-injected response could otherwise inject markup into it.
+            html(f'<div class="sum"><p>{escape(existing)}</p></div>')
         elif not llm.credentials_available():
             html('<div class="sum"><p style="color:var(--muted)">The written '
                  'summary needs a Gemini API key in <code>.env</code>. Everything '

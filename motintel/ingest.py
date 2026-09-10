@@ -12,7 +12,7 @@ from pathlib import Path
 
 import duckdb
 
-from config import (CSV_DIR, DB_PATH, EXTRACT_DELIM, EXTRACT_ESCAPE,
+from motintel.config import (CSV_DIR, DB_PATH, EXTRACT_DELIM, EXTRACT_ESCAPE,
                     EXTRACT_QUOTE, LOOKUP_DELIM, LOOKUP_DIR, RAW, YEAR)
 
 RESULT_ZIP = "dft_test_result_extracts_{year}.zip"

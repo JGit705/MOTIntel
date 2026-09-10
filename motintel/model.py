@@ -18,7 +18,7 @@ from sklearn.metrics import brier_score_loss, roc_auc_score
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from xgboost import XGBClassifier
 
-from config import CAR_TEST_CLASS, DB_PATH, PROCESSED
+from motintel.config import CAR_TEST_CLASS, DB_PATH, PROCESSED
 
 # The split is by date: train on the earlier months, test on the later ones.
 # A random split would put the same vehicle's January and November tests on

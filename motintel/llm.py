@@ -23,8 +23,8 @@ from dataclasses import asdict
 from google import genai
 from google.genai import errors, types
 
-from config import PROCESSED
-from queries import MIN_TESTS_FOR_CONFIDENCE, VehicleProfile
+from motintel.config import PROCESSED
+from motintel.queries import MIN_TESTS_FOR_CONFIDENCE, VehicleProfile
 
 log = logging.getLogger(__name__)
 
@@ -43,6 +43,11 @@ REQUEST_TIMEOUT_MS = int(os.environ.get("MOTINTEL_TIMEOUT_MS", "30000"))
 # default setting also truncated a sparse answer mid-sentence, because the
 # reasoning had eaten the output budget.
 THINKING_LEVEL = os.environ.get("MOTINTEL_THINKING", "minimal")
+
+# Zero temperature: this is reporting over supplied figures, where sampling
+# variety buys nothing but drift away from the numbers.
+TEMPERATURE = 0.0
+MAX_OUTPUT_TOKENS = 2048
 
 SYSTEM = """You summarise UK MOT test data for used-car buyers.
 
@@ -67,7 +72,7 @@ Write plain British English for a non-expert. No headings, no bullet points,
 no preamble — just the paragraph."""
 
 
-def _render(profile: VehicleProfile) -> str:
+def render_data_block(profile: VehicleProfile) -> str:
     """Render the retrieved rows as the model's entire world."""
     p, lines = profile, []
     age = (f"{p.age_band[0]}-{p.age_band[1]} years old" if p.age_band
@@ -103,10 +108,16 @@ def _render(profile: VehicleProfile) -> str:
 
 
 def _cache_key(profile: VehicleProfile) -> str:
-    """FR4.5. Keyed on the rendered data and the prompt, so a changed prompt or
-    a rebuilt database produces a fresh answer rather than a stale hit."""
-    payload = json.dumps({"data": _render(profile), "system": SYSTEM,
-                          "model": MODEL}, sort_keys=True)
+    """FR4.5. Keyed on everything that can change the answer — the rendered
+    data, the prompt, the model, and the generation settings. Reasoning depth
+    and temperature were previously outside the key, so turning the thinking
+    level down served yesterday's answer and looked like the setting had done
+    nothing."""
+    payload = json.dumps({"data": render_data_block(profile), "system": SYSTEM,
+                          "model": MODEL, "thinking": THINKING_LEVEL,
+                          "temperature": TEMPERATURE,
+                          "max_output_tokens": MAX_OUTPUT_TOKENS},
+                         sort_keys=True)
     return hashlib.sha256(payload.encode()).hexdigest()[:16]
 
 
@@ -140,7 +151,7 @@ def summarise(profile: VehicleProfile, *, use_cache: bool = True) -> str | None:
     if use_cache and cached.exists():
         return json.loads(cached.read_text())["summary"]
 
-    data = _render(profile)
+    data = render_data_block(profile)
     try:
         # A request with no ceiling is not graceful degradation: without this
         # the app spins on a hung connection instead of falling back to the
@@ -157,11 +168,8 @@ def summarise(profile: VehicleProfile, *, use_cache: bool = True) -> str | None:
                 # thinks before replying and the reasoning is drawn from the
                 # same budget, so a tight cap returns an empty string rather
                 # than a short summary.
-                max_output_tokens=2048,
-                # Zero temperature: this is a reporting task over supplied
-                # figures, and sampling variety buys nothing but drift away
-                # from the numbers.
-                temperature=0.0,
+                max_output_tokens=MAX_OUTPUT_TOKENS,
+                temperature=TEMPERATURE,
                 thinking_config=types.ThinkingConfig(
                     thinking_level=THINKING_LEVEL),
             ),

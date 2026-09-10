@@ -1,8 +1,14 @@
-duckdb>=1.1
-polars>=1.0
-xgboost>=2.1
-scikit-learn>=1.5
-streamlit>=1.39
-google-genai>=2.0
-python-dotenv>=1.0
-pyarrow>=17.0
+# Pinned to the versions this was built and tested against. Every module
+# imported by src/ or app/ appears here; plotly, numpy and scipy were
+# previously missing, so a clean install could not run the app.
+duckdb>=1.5.5
+polars>=1.44.2
+xgboost>=3.4.1
+scikit-learn>=1.9.0
+streamlit>=1.63.0
+google-genai>=2.22.0
+python-dotenv>=1.2.3
+pyarrow>=25.0.1
+plotly>=7.0.0
+numpy>=2.5.3
+scipy>=1.18.1

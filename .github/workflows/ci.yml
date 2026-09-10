@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyflakes
+
+      - name: Lint
+        run: python -m pyflakes motintel motintel_app.py tests
+
+      - name: Import every module
+        # Catches a broken import or a syntax error without needing the data.
+        run: |
+          python - <<'PY'
+          import importlib, pkgutil
+          import motintel
+          for m in pkgutil.walk_packages(motintel.__path__, "motintel."):
+              importlib.import_module(m.name)
+              print("ok", m.name)
+          PY
+
+      - name: Grounding checks (offline half)
+        # The live half needs GEMINI_API_KEY and skips itself without one, so
+        # this stays green on forks and on pull requests from them.
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python -m tests.test_llm_grounding
+
+      - name: App smoke test
+        # The exported Parquet is gitignored, so this only runs where the data
+        # has been produced. Skipping loudly beats a green tick that tested
+        # nothing.
+        run: |
+          if [ -f data/processed/age_curve.parquet ]; then
+            python -m tests.test_app_smoke
+          else
+            echo "::notice::no serving data in the checkout — smoke test skipped"
+          fi

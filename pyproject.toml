@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "motintel"
+version = "1.0.0"
+description = "UK vehicle reliability intelligence from DVSA open MOT data"
+requires-python = ">=3.11"
+dynamic = ["dependencies"]
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements.txt"] }
+
+# The package sits at the repository root rather than under src/, so both the
+# Streamlit entry point and the tests import it with no install step at all —
+# Python puts the script's own directory on sys.path. Installing the project is
+# then optional tooling convenience rather than a precondition for running it.
+[tool.setuptools.packages.find]
+include = ["motintel*"]
+
+[tool.pyflakes]
+# nothing to configure; listed so the tool config lives in one place

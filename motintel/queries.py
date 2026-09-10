@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from config import CAR_TEST_CLASS
+from motintel.config import CAR_TEST_CLASS
 
 # Three-year bands, matching src/export.py exactly. They used to differ, which
 # meant the same vehicle produced one failure rate here and a different one in

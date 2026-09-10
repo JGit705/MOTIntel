@@ -22,8 +22,9 @@ the URL.
 
 An applied AI system in two layers over a data-engineering pipeline:
 
-- **Failure prediction** — a calibrated gradient-boosted classifier estimating
-  the probability a given vehicle fails its next MOT.
+- **Observed failure rates** — what actually happened to real cars of that
+  make, model and age, benchmarked against every car of the same age. The app
+  shows measurements, not predictions, and says so on the page.
 - **Grounded explanation** — an LLM-generated summary of *what actually goes
   wrong*, constrained to defect rows retrieved from the database. The model has
   no tools, no web access, and no route to any fact outside the retrieved block.
@@ -94,12 +95,16 @@ Split by **date**, not randomly: trained on Jan–Sep 2025, tested on Oct–Dec.
 | Logistic regression | 0.6813 | 0.1872 | 0.0173 |
 | **XGBoost** | **0.6910** | **0.1846** | 0.0069 |
 
-**The honest result: XGBoost beats a group-by by 0.017 AUC.** That is a real
-but modest lift, and the group-by is actually the *best-calibrated* of the
-three. Reported rather than buried, because it is the more useful finding: most
-of the signal in MOT failure lives in make, model and age, and a gradient
-boosting machine adds relatively little on top. A 0.99 AUC here would have
+**The honest result: XGBoost beats a group-by by 0.017 AUC, and the group-by is
+better calibrated.** That finding decided the product. The classifier is an
+evaluation, not a served component: since the figure on screen is essentially
+that group-by, serving XGBoost would replace a better-calibrated number with a
+worse one for 0.017 AUC. Most of the signal in MOT failure lives in make, model
+and age, and gradient boosting adds little on top. A 0.99 AUC here would have
 meant a leak, not a triumph.
+
+`python -m motintel.model` reproduces the comparison. Nothing in the app loads
+the model — the "Observed failure rate" gauge is exactly what its title says.
 
 ---
 
@@ -153,7 +158,8 @@ DVSA annual ZIPs (8.5 GB, 12 monthly CSVs each)
       +-------------------+-------------------+
       v                                       v
 [ MODEL ]                            [ AGGREGATE EXPORT ]
-XGBoost failure classifier           1.5 MB Parquet
+XGBoost vs baseline —                1.8 MB Parquet
+evaluation only, not served
       |                                       |
       +-------------------+-------------------+
                           v
@@ -173,7 +179,8 @@ XGBoost failure classifier           1.5 MB Parquet
 | **Offline pipeline separated from serving** | Streamlit Community Cloud offers ~1GB RAM against a 4.2 GB database. Heavy work happens once, offline; the app ships 1.5 MB of pre-aggregated Parquet and never touches raw data. |
 | **SQL retrieval, not vector search** | The data is structured and the filter is exact — make, model, age band. Embedding a defect-code table to run fuzzy similarity over it would be worse engineering than a `WHERE` clause. RAG is about grounding, not vectors. |
 | **Grounding kept provider-agnostic** | The guarantee lives in the retrieval and the prompt, not the vendor. The LLM is handed a rendered data block and no tools, so it has no route to any fact outside it — true whichever model serves the request. |
-| **Baseline before ML** | The group-by is the benchmark. It came within 0.017 AUC of XGBoost and beat it on calibration — which is the finding, and would have been invisible without computing it first. |
+| **Baseline before ML** | The group-by is the benchmark. It came within 0.017 AUC of XGBoost and beat it on calibration — which is the finding, and would have been invisible without computing it first. It is also why the app serves the observed rate rather than a model. |
+| **One profile, shared** | `motintel/serving.py` builds the object the page renders and the object the LLM is given. Two builders with their own thresholds is how the same car ends up with one number on screen and a different one in its summary. |
 | **Split by date, not randomly** | A random split puts the same vehicle's January and November tests on opposite sides and leaks the answer. |
 
 ---
@@ -238,16 +245,32 @@ python -m venv .venv && ./.venv/bin/pip install -r requirements.txt
 # xgboost needs OpenMP on macOS: brew install libomp
 ```
 
+No install step is needed to run anything: the package sits at the repository
+root, so Python finds it from the project directory.
+
 Download from [DVSA](https://open.data.dvsa.gov.uk/mot-anonymised/index.html)
 into `data/raw/`: the 2025 results and failure-item extracts, plus `lookup.zip`
 (unzipped to `data/raw/lookup/`). Then:
 
 ```bash
-./.venv/bin/python src/run_pipeline.py   # ingest + transform + quality report
-./.venv/bin/python src/model.py          # baseline, logistic regression, XGBoost
-./.venv/bin/python src/export.py         # 1.5 MB serving layer
-./.venv/bin/streamlit run app/app.py
+./.venv/bin/python -m motintel.run_pipeline   # ingest + transform + quality report
+./.venv/bin/python -m motintel.model          # baseline vs logistic vs XGBoost
+./.venv/bin/python -m motintel.export         # 1.8 MB serving layer
+./.venv/bin/streamlit run motintel_app.py
 ```
+
+### Tests
+
+```bash
+./.venv/bin/python -m tests.test_app_smoke        # drives the real app
+./.venv/bin/python -m tests.test_llm_grounding    # prompt + grounding checks
+```
+
+`test_app_smoke` runs the app itself through Streamlit's `AppTest` over 158
+vehicles and every age band each one offers, weighted towards the shapes that
+have broken before. `test_llm_grounding` checks the sparse-data refusal and
+that every number in a summary appears in the data block it was given; its live
+half skips itself without `GEMINI_API_KEY`, so it stays green in CI.
 
 The LLM layer needs `GEMINI_API_KEY` in `.env` (get one free at
 [aistudio.google.com](https://aistudio.google.com/apikey)). Without it the app

@@ -12,9 +12,9 @@ import time
 
 import duckdb
 
-import ingest
-import transform
-from config import DB_PATH, YEAR
+from motintel import ingest
+from motintel import transform
+from motintel.config import DB_PATH, YEAR
 
 
 def main(year: int, skip_unpack: bool) -> None:

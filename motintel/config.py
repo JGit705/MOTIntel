@@ -1,7 +1,8 @@
 """Shared paths and data-scope constants for the MOTIntel pipeline."""
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+# motintel/config.py -> motintel -> project root
+ROOT = Path(__file__).resolve().parents[1]
 RAW = ROOT / "data" / "raw"
 CSV_DIR = RAW / "csv"
 LOOKUP_DIR = RAW / "lookup"
@@ -55,6 +56,12 @@ MAX_PLAUSIBLE_MILES = 500_000
 # date of manufacture is unknown. Left in, these become ~55-year-old vehicles
 # and distort every age-based figure.
 UNKNOWN_FIRST_USE = "1971-01-01"
+
+# FR1.5. The May 2018 regime change altered the defect categories, so rows
+# either side of it are not comparable. Only 2025 is loaded today, which makes
+# this filter inert — it is here so that adding an older year narrows the scope
+# instead of silently mixing two incompatible schemes.
+EARLIEST_TEST_DATE = "2019-01-01"
 
 # Class 4 is cars and light passenger vehicles: the audience for this product.
 # Other classes stay in the analytical table but the app scopes to class 4.

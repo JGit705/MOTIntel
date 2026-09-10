@@ -7,8 +7,9 @@ from __future__ import annotations
 
 import duckdb
 
-from config import (CAR_TEST_CLASS, DB_PATH, DECIDED_RESULTS, FAIL_RESULTS,
-                    INITIAL_TEST_TYPES, MAX_PLAUSIBLE_MILES, UNKNOWN_FIRST_USE)
+from motintel.config import (CAR_TEST_CLASS, DB_PATH, DECIDED_RESULTS,
+                    EARLIEST_TEST_DATE, FAIL_RESULTS, INITIAL_TEST_TYPES,
+                    MAX_PLAUSIBLE_MILES, UNKNOWN_FIRST_USE)
 
 
 def _sql_list(values) -> str:
@@ -44,6 +45,7 @@ def build(con: duckdb.DuckDBPyConnection) -> None:
           AND first_use_date IS NOT NULL
           AND first_use_date <> DATE '{UNKNOWN_FIRST_USE}'
           AND first_use_date <= test_date
+          AND test_date >= DATE '{EARLIEST_TEST_DATE}'
     """)
 
     # Defect rows resolved to readable text. The join is composite: an rfr_id
@@ -102,6 +104,8 @@ def quality_report(con: duckdb.DuckDBPyConnection) -> None:
             f"first_use_date = DATE '{UNKNOWN_FIRST_USE}'",
         "first_use_date missing or after test date":
             "first_use_date IS NULL OR first_use_date > test_date",
+        f"tested before {EARLIEST_TEST_DATE} (pre-2018 defect scheme)":
+            f"test_date < DATE '{EARLIEST_TEST_DATE}'",
     }
     for label, predicate in reasons.items():
         n = con.execute(
