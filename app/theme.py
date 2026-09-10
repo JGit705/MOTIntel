@@ -43,13 +43,32 @@ def css(p: dict) -> str:
   :root {{
     --bg:{p['bg']}; --panel:{p['panel']}; --panel2:{p['panel_2']};
     --border:{p['border']}; --text:{p['text']}; --muted:{p['muted']};
-    --accent:{p['accent']}; --good:{p['good']}; --warn:{p['warn']};
+    --accent:{p['accent']}; --accent_soft:{p['accent_soft']};
+    --good:{p['good']}; --warn:{p['warn']};
     --bad:{p['bad']}; --teal:{p['teal']};
   }}
 
   .stApp {{ background: var(--bg); color: var(--text); }}
   [data-testid="stHeader"] {{ background: transparent; }}
-  .block-container {{ padding-top: 1.6rem; max-width: 1500px; }}
+  /* The dashboard is read on a desktop at a desk, so it takes the width it
+     is given rather than sitting in a narrow column. Prose inside it is still
+     held to a readable measure — see .hero .body. */
+  .block-container {{ padding-top: 1.6rem; padding-left: 2.2rem;
+                      padding-right: 2.2rem; max-width: 1800px;
+                      position: relative; }}
+
+  /* The switch floats over the masthead's top-right rather than taking a
+     column of its own — a column left the masthead stopping short of the page
+     edge with dead space beside it. */
+  /* Streamlit wraps every element in its own relatively-positioned
+     container, so positioning the checkbox itself anchors to that wrapper
+     rather than the page. The wrapper is what has to move. */
+  [data-testid="stElementContainer"]:has([data-testid="stCheckbox"]) {{
+    position: absolute; right: 2.6rem; top: 2.6rem; z-index: 5;
+    width: auto !important;
+  }}
+  [data-testid="stCheckbox"] {{ width: auto !important; white-space: nowrap; }}
+  [data-testid="stCheckbox"] label {{ white-space: nowrap; }}
 
   /* Streamlit's floating toolbar sits in the top-right corner and keeps its
      hit area even when its buttons are not visible, so it silently swallowed
@@ -78,6 +97,45 @@ def css(p: dict) -> str:
     border: 1px solid var(--border); border-radius: 999px;
     padding: 6px 12px; background: var(--panel);
   }}
+
+  /* ---- vehicle identity ---- */
+  .mot-id {{ display:flex; align-items:baseline; gap:14px; flex-wrap:wrap;
+             margin: 2px 0 12px 2px; }}
+  .mot-id .name {{ font-size: 30px; font-weight: 700; letter-spacing:-.6px; }}
+  .mot-id .chip {{
+    font-size: 12.5px; font-weight: 600; color: var(--muted);
+    border: 1px solid var(--border); border-radius: 999px;
+    padding: 5px 11px; background: var(--panel);
+  }}
+  .mot-id .verdict {{ font-size: 13.5px; font-weight: 650; }}
+
+  /* ---- the summary, given the room it earns ---- */
+  .mot-hero {{
+    background: linear-gradient(180deg, var(--accent_soft) 0%,
+                                        var(--panel) 62%);
+    border: 1px solid var(--border);
+    border-radius: 18px; padding: 26px 30px; margin: 4px 0 18px 0;
+    box-shadow: 0 10px 30px -18px rgba(0,0,0,.55);
+  }}
+  .mot-hero .eyebrow {{
+    font-size: 12.5px; font-weight: 650; color: var(--accent);
+    display:flex; align-items:center; gap:8px; margin-bottom: 10px;
+  }}
+  .mot-hero .body {{
+    font-size: 19px; line-height: 1.66; max-width: 72ch; font-weight: 380;
+  }}
+  .mot-hero .cite {{ font-size: 12px; color: var(--muted); margin-top: 16px;
+                     max-width: 72ch; }}
+  .mot-hero.empty .body {{ font-size: 16px; color: var(--muted); }}
+
+  /* ---- severity key ---- */
+  .mot-key {{ display:flex; flex-direction:column; gap:10px; margin-top:4px; }}
+  .mot-key .row {{ display:flex; gap:10px; align-items:flex-start;
+                   font-size:12.5px; line-height:1.5; }}
+  .mot-key .dot {{ width:9px; height:9px; border-radius:50%; flex:none;
+                   margin-top:5px; }}
+  .mot-key b {{ font-weight:650; }}
+  .mot-key .row span {{ color: var(--muted); }}
 
   /* ---- metric cards ---- */
   .mot-card {{
@@ -138,7 +196,6 @@ def css(p: dict) -> str:
   [data-testid="stDataFrame"] {{ border-radius: 12px; overflow: hidden; }}
   footer, #MainMenu {{ visibility: hidden; }}
 
-  /* the theme switch sits beside the masthead, so line it up with it */
-  [data-testid="stCheckbox"] {{ margin-top: 24px; }}
+
 </style>
 """

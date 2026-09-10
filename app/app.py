@@ -81,9 +81,8 @@ light = st.session_state.get("light_mode", False)
 p = th.palette("light" if light else "dark")
 st.markdown(th.css(p), unsafe_allow_html=True)
 
-head, toggle = st.columns([13, 2])
-with head:
-    st.markdown(
+st.toggle("Light mode", key="light_mode")
+st.markdown(
         '<div class="mot-head">'
         '<div class="mot-mark">🚗</div>'
         '<div><div class="mot-title">MOTIntel</div>'
@@ -91,8 +90,6 @@ with head:
         'MOT tests</div></div>'
         '<div class="mot-pill">DVSA open data · 2025</div>'
         '</div>', unsafe_allow_html=True)
-with toggle:
-    st.toggle("Light mode", key="light_mode")
 
 try:
     models = load("models.parquet")
@@ -106,22 +103,37 @@ except FileNotFoundError:
     st.stop()
 
 # --- FR5.1 selection -------------------------------------------------------
-c1, c2, c3 = st.columns([2, 3, 2])
+c1, c2, c3 = st.columns([2, 3, 3])
 make = c1.selectbox("Make", sorted(models["make"].unique().to_list()))
 model_options = (models.filter(pl.col("make") == make)
                  .sort("n_tests", descending=True)["model"].to_list())
 model = c2.selectbox("Model", model_options)
-age = c3.slider("Vehicle age at test (years)", 3, 25, 8)
 
-age_band = (age // 3) * 3
+# The age control only offers ages this vehicle was actually tested at. A
+# fixed 3-25 slider let you land on a band with no data and get an error
+# message for your trouble — the control was promising something the dataset
+# could not answer.
+this_model = (age_curve.filter((pl.col("make") == make)
+                               & (pl.col("model") == model))
+              .sort("age_band"))
+bands = this_model["age_band"].to_list()
+
+if not bands:
+    st.warning(f"No {make} {model} tests in this dataset.")
+    st.stop()
+if len(bands) == 1:
+    age_band = bands[0]
+    c3.markdown(f'<div style="margin-top:26px" class="mot-id">'
+                f'<span class="chip">Only tested at {age_band}–{age_band + 3} '
+                f'years in this data</span></div>', unsafe_allow_html=True)
+else:
+    age_band = c3.select_slider(
+        "Vehicle age at test", options=bands, value=bands[len(bands) // 2],
+        format_func=lambda b: f"{b}–{b + 3} yrs")
+
 cells = rates.filter((pl.col("make") == make) & (pl.col("model") == model)
                      & (pl.col("age_band") == age_band))
-this_age = age_curve.filter((pl.col("make") == make) & (pl.col("model") == model)
-                            & (pl.col("age_band") == age_band))
-
-if this_age.is_empty():
-    st.warning(f"No data for a {age}-year-old {make} {model} in this dataset.")
-    st.stop()
+this_age = this_model.filter(pl.col("age_band") == age_band)
 
 n_tests = int(this_age["n_tests"][0])
 failure_rate = float(this_age["failure_rate"][0])
@@ -148,6 +160,16 @@ else:
     tone, delta = p["warn"], "≈ about average for this age"
 
 sparse = n_tests < MIN_TESTS_FOR_CONFIDENCE
+verdict = ("Fails less often than average" if tone == p["good"] else
+           "Fails more often than average" if tone == p["bad"] else
+           "About average for its age")
+st.markdown(
+    f'<div class="mot-id"><span class="name">{make} {model}</span>'
+    f'<span class="chip">{age_band}–{age_band + 3} years old</span>'
+    f'<span class="chip">{n_tests:,} MOT tests</span>'
+    f'<span class="verdict" style="color:{tone}">{verdict}</span></div>',
+    unsafe_allow_html=True)
+
 m1, m2, m3 = st.columns(3)
 m1.markdown(card(
     "Failure probability", f"{failure_rate:.0%}", delta=delta,
@@ -178,7 +200,7 @@ by_mileage = (cells.sort("mileage_band")
                       failure_rate=pl.col("failure_rate")))
 
 profile = profile_of(
-    make, model, age, n_tests, failure_rate,
+    make, model, age_band + 1, n_tests, failure_rate,
     top.rename({"defect_category": "category",
                 "defect_desc": "defect"}).to_dicts(),
     [{"mileage_band": r["miles"], "n_tests": r["n_tests"],
@@ -189,40 +211,99 @@ profile = profile_of(
 # happens when asked for — otherwise idly changing the dropdowns would spend
 # the day's allowance without anyone reading a word of it.
 existing = llm.cached_summary(profile)
-cite = ("Generated from the retrieved figures on this page only. "
-        "No other vehicle information is used.")
+cite = ("Written by Gemini from the figures on this page and nothing else — "
+        "no vehicle knowledge of its own, no web access. If a fact is not in "
+        "the retrieved data, it has no route to it.")
+eyebrow = (f'<div class="eyebrow">✦ What this means &nbsp;·&nbsp; '
+           f'{make} {model}, {age_band}–{age_band + 3} years old</div>')
 
 if not llm.credentials_available():
     st.markdown(
-        f'<div class="mot-panel"><h4>What this means</h4><div class="body">'
-        f'AI summary unavailable — no Gemini API key configured. '
+        f'<div class="mot-hero empty">{eyebrow}<div class="body">'
+        f'The plain-English summary needs a Gemini API key in .env. '
         f'Every figure on this page is unaffected.</div></div>',
         unsafe_allow_html=True)
 elif existing:
     st.markdown(
-        f'<div class="mot-panel"><h4>What this means</h4>'
-        f'<div class="body">{existing}</div>'
-        f'<div class="cite">{cite} Retrieved from cache — no API call made.'
+        f'<div class="mot-hero">{eyebrow}<div class="body">{existing}</div>'
+        f'<div class="cite">{cite} Shown from cache — no API call made.'
         f'</div></div>', unsafe_allow_html=True)
 else:
-    st.markdown('<div class="mot-panel"><h4>What this means</h4>'
-                '<div class="body">A plain-English summary of what actually '
-                'fails on this vehicle, written from the figures below and '
-                'nothing else.</div></div>', unsafe_allow_html=True)
-    if st.button("Explain what this means", type="primary"):
+    st.markdown(
+        f'<div class="mot-hero empty">{eyebrow}<div class="body">'
+        f'Turn the figures below into a few plain sentences: what actually '
+        f'fails on this vehicle, how it changes with mileage, and how it '
+        f'compares with its rivals.</div></div>', unsafe_allow_html=True)
+    b1, b2 = st.columns([1, 4])
+    with b1:
+        write_it = st.button("Write the summary", type="primary")
+    with b2:
+        st.markdown('<div style="margin-top:9px;font-size:12.5px;opacity:.7">'
+                    'One API call, about 600 tokens. Summaries you have '
+                    'already generated reappear instantly and cost nothing.'
+                    '</div>', unsafe_allow_html=True)
+    if write_it:
         with st.spinner("Reading the defect data ..."):
             summary = llm.summarise(profile)
         if summary:
-            st.markdown(f'<div class="mot-panel"><div class="body">{summary}'
-                        f'</div><div class="cite">{cite}</div></div>',
+            st.markdown(f'<div class="mot-hero">{eyebrow}'
+                        f'<div class="body">{summary}</div>'
+                        f'<div class="cite">{cite}</div></div>',
                         unsafe_allow_html=True)
         else:
             # FR4.4 — the layer is down, the page still works.
-            st.info("AI summary unavailable right now. The figures on this "
-                    "page are unaffected.")
-    else:
-        st.caption("One API call, roughly 600 tokens. Summaries already "
-                   "generated are shown automatically and cost nothing.")
+            st.info("The summary could not be written just now — the free "
+                    "tier allows a limited number of requests per minute. "
+                    "Every figure on this page is unaffected; try again "
+                    "shortly.")
+
+# --- where this model is at its best ---------------------------------------
+best_age = this_model.sort("failure_rate").head(1)
+model_miles = (rates.filter((pl.col("make") == make) & (pl.col("model") == model))
+               .group_by("mileage_band")
+               .agg(n_tests=pl.col("n_tests").sum(),
+                    failure_rate=(pl.col("failure_rate") * pl.col("n_tests"))
+                    .sum() / pl.col("n_tests").sum())
+               .filter(pl.col("n_tests") >= 50).sort("failure_rate"))
+
+# The steepest step between consecutive age bands — the point at which this
+# model starts costing money, which is more actionable than "newer is better".
+cliff = None
+if len(this_model) > 1:
+    rows = this_model.to_dicts()
+    jumps = [(rows[i]["failure_rate"] - rows[i - 1]["failure_rate"], rows[i])
+             for i in range(1, len(rows))]
+    step, row = max(jumps, key=lambda t: t[0])
+    if step > 0.02:
+        cliff = (row["age_band"], step)
+
+s1, s2, s3 = st.columns(3)
+if not best_age.is_empty():
+    b = int(best_age["age_band"][0])
+    s1.markdown(card(
+        "Best age, on this data", f"{b}–{b + 3} yrs",
+        note=(f"{float(best_age['failure_rate'][0]):.1%} failure rate over "
+              f"{int(best_age['n_tests'][0]):,} tests. Younger is almost "
+              f"always better — the useful question is where it stops being.")),
+        unsafe_allow_html=True)
+if not model_miles.is_empty():
+    mb = int(model_miles["mileage_band"][0])
+    s2.markdown(card(
+        "Best mileage", f"{mb // 1000}–{mb // 1000 + 20}k",
+        note=(f"{float(model_miles['failure_rate'][0]):.1%} failure rate over "
+              f"{int(model_miles['n_tests'][0]):,} tests at this odometer "
+              f"reading.")), unsafe_allow_html=True)
+if cliff:
+    s3.markdown(card(
+        "Where it turns", f"{cliff[0]} yrs",
+        delta=f"↑ {cliff[1] * 100:.1f} pts in one band",
+        delta_colour=p["warn"],
+        note="The sharpest rise between consecutive age bands for this model."),
+        unsafe_allow_html=True)
+else:
+    s3.markdown(card("Where it turns", "—",
+                     note="No sharp step between age bands for this model."),
+                unsafe_allow_html=True)
 
 # --- FR5.3 / FR5.4 charts --------------------------------------------------
 left, right = st.columns(2)
@@ -319,9 +400,28 @@ with sev_col:
                           "<br>%{customdata:,} tests<extra></extra>"))
         fig.update_xaxes(tickformat=".0%", range=[0, 1], nticks=5,
                          tickangle=0)
-        st.plotly_chart(style_fig(fig, p, 200), width="stretch")
-        st.caption("A minor defect does not cause a failure, so it cannot "
-                   "appear here — only Dangerous and Major do.")
+        st.plotly_chart(style_fig(fig, p, 190), width="stretch")
+
+    # Nobody should have to guess what separates the two. These are DVSA's
+    # own definitions, not a paraphrase.
+    st.markdown(
+        f'<div class="mot-key">'
+        f'<div class="row"><div class="dot" style="background:{p["bad"]}">'
+        f'</div><div><b>Dangerous</b> — <span>a direct and immediate risk to '
+        f'road safety, or a serious environmental impact. The car fails, and '
+        f'must not be driven until it is repaired.</span></div></div>'
+        f'<div class="row"><div class="dot" style="background:{p["warn"]}">'
+        f'</div><div><b>Major</b> — <span>may affect safety, put other road '
+        f'users at risk, or harm the environment. The car fails and must be '
+        f'repaired.</span></div></div>'
+        f'<div class="row"><div class="dot" style="background:{p["muted"]}">'
+        f'</div><div><b>Minor</b> — <span>noted on the certificate but does '
+        f'not cause a failure, so it never appears above.</span></div></div>'
+        f'</div>'
+        f'<div class="mot-secsub" style="margin-top:10px">Categories as '
+        f'defined by DVSA under the 2018 EU roadworthiness directive. One '
+        f'test can carry several defects, so the two bars overlap.</div>',
+        unsafe_allow_html=True)
 
 with peer_col:
     st.markdown('<div class="mot-sechead">Compared with other models of the '
