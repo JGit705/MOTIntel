@@ -87,6 +87,64 @@ def export() -> None:
         ) TO '{PROCESSED / "models.parquet"}' (FORMAT parquet, COMPRESSION zstd)
     """)
 
+    # Age curve per model. Built without the mileage split so it keeps rows
+    # where no odometer reading was taken, which the failure_rates grain drops.
+    print("exporting failure rate by age band, per model")
+    con.execute(f"""
+        COPY (
+            SELECT make, model,
+                   CAST(floor(vehicle_age_years / 3) * 3 AS INT) AS age_band,
+                   count(*) AS n_tests,
+                   avg(CASE WHEN failed THEN 1.0 ELSE 0.0 END) AS failure_rate
+            FROM analytical_tests
+            WHERE test_class_id = '{CAR_TEST_CLASS}'
+              AND make IS NOT NULL AND model IS NOT NULL
+              AND vehicle_age_years BETWEEN 0 AND 30
+            GROUP BY 1, 2, 3 HAVING count(*) >= {MIN_CELL}
+        ) TO '{PROCESSED / "age_curve.parquet"}' (FORMAT parquet, COMPRESSION zstd)
+    """)
+
+    # The all-cars benchmark the headline number is judged against, and the
+    # curve every model's age line is drawn over.
+    print("exporting the all-cars benchmark by age band")
+    con.execute(f"""
+        COPY (
+            SELECT CAST(floor(vehicle_age_years / 3) * 3 AS INT) AS age_band,
+                   count(*) AS n_tests,
+                   avg(CASE WHEN failed THEN 1.0 ELSE 0.0 END) AS failure_rate
+            FROM analytical_tests
+            WHERE test_class_id = '{CAR_TEST_CLASS}'
+              AND vehicle_age_years BETWEEN 0 AND 30
+            GROUP BY 1
+        ) TO '{PROCESSED / "benchmark.parquet"}' (FORMAT parquet, COMPRESSION zstd)
+    """)
+
+    # Severity. Only Dangerous and Major appear here, and that is correct
+    # rather than a gap: a Minor defect does not cause a failure, so it cannot
+    # appear among failure items. Counted as distinct tests, because one test
+    # carrying three dangerous items is still one dangerous car.
+    print("exporting defect severity split")
+    con.execute(f"""
+        COPY (
+            WITH scoped AS (
+                SELECT test_id, make, model,
+                       CAST(floor(vehicle_age_years / 3) * 3 AS INT) AS age_band
+                FROM analytical_tests
+                WHERE test_class_id = '{CAR_TEST_CLASS}'
+                  AND make IS NOT NULL AND model IS NOT NULL
+            )
+            SELECT s.make, s.model, s.age_band,
+                   d.deficiency_category,
+                   count(DISTINCT s.test_id) AS n_tests
+            FROM scoped s
+            JOIN analytical_defects d USING (test_id)
+            WHERE d.rfr_type_code IN ('F', 'P')
+              AND d.deficiency_category IN ('Dangerous', 'Major')
+            GROUP BY 1, 2, 3, 4
+            HAVING count(DISTINCT s.test_id) >= 5
+        ) TO '{PROCESSED / "severity.parquet"}' (FORMAT parquet, COMPRESSION zstd)
+    """)
+
     con.close()
     total = 0
     for f in sorted(PROCESSED.glob("*.parquet")):
