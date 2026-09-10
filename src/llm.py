@@ -34,6 +34,16 @@ MODEL = os.environ.get("MOTINTEL_MODEL", "gemini-3.6-flash")
 CACHE_DIR = PROCESSED / "llm_cache"
 REQUEST_TIMEOUT_MS = int(os.environ.get("MOTINTEL_TIMEOUT_MS", "30000"))
 
+# This model reasons before answering and bills for it. Measured on real
+# profiles, the default setting spent ~1,700 reasoning tokens to produce ~120
+# tokens of summary — two thirds of every request, invisible to the reader.
+# At "minimal" the reasoning drops to zero for roughly a quarter of the tokens,
+# and it was checked rather than assumed: the sparse-data refusal still fires
+# and every figure in a full summary still traces to the data block. The
+# default setting also truncated a sparse answer mid-sentence, because the
+# reasoning had eaten the output budget.
+THINKING_LEVEL = os.environ.get("MOTINTEL_THINKING", "minimal")
+
 SYSTEM = """You summarise UK MOT test data for used-car buyers.
 
 Use ONLY the data in the DATA block. It is the complete set of facts available
@@ -98,6 +108,20 @@ def _cache_key(profile: VehicleProfile) -> str:
     return hashlib.sha256(payload.encode()).hexdigest()[:16]
 
 
+def cached_summary(profile: VehicleProfile) -> str | None:
+    """Return a previously generated summary, or None — never calls the API.
+
+    The app uses this to show an already-paid-for answer immediately, and to
+    decide whether asking for a new one needs a deliberate button press.
+    """
+    if profile.n_tests == 0:
+        return None
+    path = CACHE_DIR / f"{_cache_key(profile)}.json"
+    if path.exists():
+        return json.loads(path.read_text())["summary"]
+    return None
+
+
 def summarise(profile: VehicleProfile, *, use_cache: bool = True) -> str | None:
     """Return a grounded summary, or None if the LLM layer is unavailable.
 
@@ -136,6 +160,8 @@ def summarise(profile: VehicleProfile, *, use_cache: bool = True) -> str | None:
                 # figures, and sampling variety buys nothing but drift away
                 # from the numbers.
                 temperature=0.0,
+                thinking_config=types.ThinkingConfig(
+                    thinking_level=THINKING_LEVEL),
             ),
         )
     except errors.ClientError as e:

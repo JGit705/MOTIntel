@@ -48,6 +48,21 @@ claims are added.
 Response caching is verified: a repeat request for the same vehicle returns in
 **0.4 ms** against **9.8 s** for the API call, byte-identical.
 
+### Quota discipline
+
+The API is on a limited free tier, so the app does not call it speculatively.
+A summary already generated for a vehicle is shown immediately from disk at no
+cost; a new one happens only on an explicit button press. Idly moving the
+dropdowns spends nothing.
+
+Reasoning depth is set to `minimal`. Measured on real profiles, the default
+spent ~1,700 reasoning tokens against ~120 tokens of visible summary — two
+thirds of every request, unread. At `minimal` a request costs roughly 600
+tokens instead of ~2,500, and the behaviour was verified rather than assumed:
+the sparse-data refusal still fires and the figures still trace to the data
+block. The default setting also truncated a sparse answer mid-sentence, having
+spent the output budget on reasoning.
+
 ---
 
 ## Real numbers
