@@ -145,6 +145,44 @@ def export() -> None:
         ) TO '{PROCESSED / "severity.parquet"}' (FORMAT parquet, COMPRESSION zstd)
     """)
 
+    # Vehicle identity: what the header states about the car itself, rather
+    # than about its failures. Year range is clipped to the 2nd/98th
+    # percentile because a handful of re-registered or mis-keyed first-use
+    # dates would otherwise stretch every model back to the 1970s.
+    print("exporting vehicle metadata")
+    con.execute(f"""
+        COPY (
+            WITH fuels AS (
+                SELECT t.make, t.model, f.fuel_type AS fuel,
+                       count(*) * 1.0 / sum(count(*))
+                           OVER (PARTITION BY t.make, t.model) AS share
+                FROM analytical_tests t
+                LEFT JOIN lu_fuel_type f ON f.type_code = t.fuel_type
+                WHERE t.test_class_id = '{CAR_TEST_CLASS}'
+                  AND t.make IS NOT NULL AND t.model IS NOT NULL
+                GROUP BY 1, 2, 3
+            ),
+            main_fuels AS (
+                SELECT make, model,
+                       string_agg(fuel, ' / ' ORDER BY share DESC) AS fuels
+                FROM fuels WHERE share >= 0.12 AND fuel IS NOT NULL
+                GROUP BY 1, 2
+            )
+            SELECT t.make, t.model,
+                   CAST(quantile_cont(year(t.first_use_date), 0.02) AS INT) AS year_from,
+                   CAST(quantile_cont(year(t.first_use_date), 0.98) AS INT) AS year_to,
+                   avg(t.vehicle_age_years) AS avg_age,
+                   count(*) AS n_tests,
+                   any_value(m.fuels) AS fuels
+            FROM analytical_tests t
+            LEFT JOIN main_fuels m USING (make, model)
+            WHERE t.test_class_id = '{CAR_TEST_CLASS}'
+              AND t.make IS NOT NULL AND t.model IS NOT NULL
+            GROUP BY 1, 2
+            HAVING count(*) >= {MIN_CELL}
+        ) TO '{PROCESSED / "vehicle_meta.parquet"}' (FORMAT parquet, COMPRESSION zstd)
+    """)
+
     con.close()
     total = 0
     for f in sorted(PROCESSED.glob("*.parquet")):
