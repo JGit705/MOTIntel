@@ -182,7 +182,10 @@ top = (defects.filter((pl.col("make") == make) & (pl.col("model") == model)
 
 # Mileage bands, with everything past the cap pooled so the tail does not
 # become a row of single-test noise.
+# drop_nulls is belt-and-braces: the export no longer emits a null band, but a
+# stale Parquet from an older run should degrade rather than crash the page.
 by_mileage = (rates.filter((pl.col("make") == make) & (pl.col("model") == model))
+              .drop_nulls("mileage_band")
               .with_columns(band=pl.when(pl.col("mileage_band") >= MILEAGE_CAP)
                             .then(MILEAGE_CAP).otherwise(pl.col("mileage_band")))
               .group_by("band")

@@ -39,6 +39,12 @@ def export() -> None:
             WHERE test_class_id = '{CAR_TEST_CLASS}'
               AND make IS NOT NULL AND model IS NOT NULL
               AND vehicle_age_years BETWEEN 0 AND 40
+              -- A test with no odometer reading has no place on a mileage
+              -- axis: floor(NULL / 20000) is NULL, which formed a phantom
+              -- band and crashed the label built from it. Those tests are
+              -- still counted everywhere that does not split by mileage,
+              -- which is what age_curve exists for.
+              AND odometer_miles IS NOT NULL
             GROUP BY 1, 2, 3, 4
             HAVING count(*) >= {MIN_CELL}
         ) TO '{PROCESSED / "failure_rates.parquet"}' (FORMAT parquet, COMPRESSION zstd)
