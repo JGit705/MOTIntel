@@ -24,6 +24,7 @@ from google import genai
 from google.genai import errors, types
 
 from motintel.config import PROCESSED
+from motintel.grounding import truncated
 from motintel.queries import MIN_TESTS_FOR_CONFIDENCE, VehicleProfile
 
 log = logging.getLogger(__name__)
@@ -129,6 +130,18 @@ def _cache_key(profile: VehicleProfile) -> str:
     return hashlib.sha256(payload.encode()).hexdigest()[:16]
 
 
+def _usable(summary: str | None) -> bool:
+    """Whether a cached answer is fit to show.
+
+    An answer cut off at the token ceiling is a non-empty string, so before
+    finish_reason was checked, truncated summaries were written to disk and
+    served from it indefinitely — two of them still were. Refusing to serve
+    them here means the bad entries drain as they are asked for again, without
+    anyone having to know which files to delete.
+    """
+    return bool(summary) and not truncated(summary)
+
+
 def cached_summary(profile: VehicleProfile) -> str | None:
     """Return a previously generated summary, or None — never calls the API.
 
@@ -139,7 +152,8 @@ def cached_summary(profile: VehicleProfile) -> str | None:
         return None
     path = CACHE_DIR / f"{_cache_key(profile)}.json"
     if path.exists():
-        return json.loads(path.read_text())["summary"]
+        summary = json.loads(path.read_text())["summary"]
+        return summary if _usable(summary) else None
     return None
 
 
@@ -157,7 +171,9 @@ def summarise(profile: VehicleProfile, *, use_cache: bool = True) -> str | None:
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     cached = CACHE_DIR / f"{_cache_key(profile)}.json"
     if use_cache and cached.exists():
-        return json.loads(cached.read_text())["summary"]
+        previous = json.loads(cached.read_text())["summary"]
+        if _usable(previous):
+            return previous
 
     data = render_data_block(profile)
     try:
@@ -219,6 +235,12 @@ def summarise(profile: VehicleProfile, *, use_cache: bool = True) -> str | None:
     if not summary:
         # A safety filter or an empty candidate list, not an exception.
         log.warning("Gemini returned no text — serving without a summary")
+        return None
+    if truncated(summary):
+        # Belt and braces behind the finish_reason check: half an answer is
+        # worse than none, and caching it makes it permanent.
+        log.warning("Gemini returned a half-finished summary — serving "
+                    "without one")
         return None
     cached.write_text(json.dumps({
         "vehicle": asdict(profile) | {"top_defects": [], "by_mileage": [],

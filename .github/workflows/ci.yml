@@ -55,6 +55,12 @@ jobs:
         # exported Parquet, which the anchors need something to match in.
         run: python -m tests.test_defect_labels
 
+      - name: LLM evaluation
+        # Spends no quota: it measures the summaries llm.py has already cached
+        # and reports how much of the fixed comparison set that covered. With
+        # an empty cache there is nothing to measure and it says so.
+        run: python -m tests.test_llm_eval
+
       - name: App smoke test
         # The exported Parquet is gitignored, so this only runs where the data
         # has been produced. Skipping loudly beats a green tick that tested

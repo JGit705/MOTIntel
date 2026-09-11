@@ -185,6 +185,25 @@ def check_review_page(fail, table, pairs) -> None:
         fail("the review page does not show failing checks")
 
 
+def check_shipped_labelling(fail, table, pairs) -> None:
+    """The labelling that is actually on disk, not a synthetic stand-in.
+
+    enrich gates its own write on these checks, but nothing else did: a Parquet
+    edited by hand, or one produced before an anchor was added, would ship
+    unnoticed. This is the regression the plan asks for — a prompt change that
+    quietly reclassifies brake faults fails here rather than in the app.
+    """
+    from motintel import serving
+    shipped = serving.defect_labels()
+    if shipped is None:
+        print("        (no defect_meta.parquet — the shipped labelling is "
+              "not being checked)")
+        return
+    shipped = shipped.with_columns(n_tests=pl.lit(0, dtype=pl.Int64))
+    for problem in dl.validate(shipped, pairs)[:10]:
+        fail(problem)
+
+
 def run() -> int:
     if not enrich.SOURCE.exists():
         print(f"  skipped: no {enrich.SOURCE.name} in this checkout")
@@ -196,7 +215,8 @@ def run() -> int:
               ("closed sets", check_closed_sets), ("shape", check_shape),
               ("inventions", check_inventions), ("anchors", check_anchors),
               ("overrides", check_overrides), ("stability", check_stability),
-              ("review page", check_review_page)]
+              ("review page", check_review_page),
+              ("shipped labelling", check_shipped_labelling)]
     for name, check in checks:
         found: list[str] = []
         check(found.append, table, pairs)

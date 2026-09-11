@@ -51,6 +51,43 @@ claims are added.
 Response caching is verified: a repeat request for the same vehicle returns in
 **0.4 ms** against **9.8 s** for the API call, byte-identical.
 
+### Is the AI layer honest? Measured, not asserted
+
+"Grounded by design" is an architecture claim. `python -m tests.test_llm_eval`
+turns it into a number, over every summary the layer has already produced:
+
+| | |
+|---|---|
+| Figures checked against the data block they came from | **82** across 10 summaries |
+| Summaries carrying a figure that is not in that block | **0** |
+| Summaries volunteering a price, recall, body type or buying advice | **0** |
+| Vehicles too thin to describe that were declined | **3 / 3** |
+| Well-covered vehicles answered rather than declined | **6 / 6** |
+
+That last row is why the others mean anything. A model that declines everything
+scores perfectly on grounding and is useless, so refusing where the data is
+ample is counted as its own failure. A number that can be maximised by
+answering nothing is not a measurement.
+
+The harness spends no quota: it reads what `llm.py` has already cached, where
+each entry stores the exact data block the model was given, so grounding is
+checked against what it saw. `MOTINTEL_EVAL_BUDGET=10` tops the set up.
+
+**Both of its first two findings were bugs in the harness, not the model**, and
+both are worth keeping in view:
+
+- Four well-covered vehicles were recorded as refusals because the word list
+  matched *"tread depth **below the** 1.6mm limit"* and *"**insufficient**
+  washer liquid"*. The vocabulary of not knowing and the vocabulary of broken
+  cars overlap almost entirely, so a refusal now has to be about the evidence:
+  an inability word near a word for data.
+- Six summaries were accused of inventing mileages, because the data block
+  labels the axis `20k`/`120k` and the model spells those out as `20,000`.
+
+What survived was real: two cached summaries stop mid-sentence, written before
+`finish_reason` was checked. `llm.py` no longer serves a truncated answer from
+cache, so they regenerate when next asked for.
+
 ### Quota discipline
 
 The API is on a limited free tier, so the app does not call it speculatively.
@@ -311,6 +348,7 @@ exactly as before, in DVSA wording.
 ./.venv/bin/python -m tests.test_llm_grounding    # prompt + grounding checks
 ./.venv/bin/python -m tests.test_enrich           # the enrichment stage, offline
 ./.venv/bin/python -m tests.test_defect_labels    # the label contract, offline
+./.venv/bin/python -m tests.test_llm_eval         # measures the summaries, offline
 ```
 
 `test_app_smoke` runs the app itself through Streamlit's `AppTest` over 158
