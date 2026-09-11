@@ -21,7 +21,8 @@ from motintel.queries import MIN_TESTS_FOR_CONFIDENCE, VehicleProfile
 __all__ = ["MIN_TESTS_FOR_CONFIDENCE", "build_profile", "tables",
            "selectable_vehicles", "age_bands", "mileage_curve",
            "mileage_label", "benchmark_for", "peers_for",
-           "reliability_ranking", "RANKING_COLUMNS", "is_sparse"]
+           "reliability_ranking", "RANKING_COLUMNS", "defect_labels",
+           "is_sparse"]
 
 # Everything past this is pooled, so the tail does not become a row of
 # single-test noise.
@@ -45,6 +46,11 @@ RANKING_COLUMNS = {"make": pl.Utf8, "model": pl.Utf8, "n_tests": pl.Int64,
 _EMPTY_RANKING = pl.DataFrame(schema=RANKING_COLUMNS)
 TABLES = ("failure_rates", "top_defects", "age_curve", "benchmark",
           "severity", "vehicle_meta")
+# Not in TABLES: the app has to run without it. The enrichment stage needs an
+# API key and a day's quota, so a checkout that has run the pipeline but not
+# enrich should still work, minus the plain English — the same bargain the
+# summary layer makes.
+DEFECT_META = "defect_meta"
 
 
 @lru_cache(maxsize=1)
@@ -54,6 +60,21 @@ def tables() -> dict[str, pl.DataFrame]:
         raise FileNotFoundError(
             f"missing serving data: {', '.join(missing)}. Run export first.")
     return {t: pl.read_parquet(PROCESSED / f"{t}.parquet") for t in TABLES}
+
+
+@lru_cache(maxsize=1)
+def defect_labels() -> pl.DataFrame | None:
+    """The plain-English defect labels, or None if enrich has not been run.
+
+    None is a normal state, not an error. Everything built on these degrades to
+    the DVSA wording, which is what the app showed before they existed.
+    """
+    path = PROCESSED / f"{DEFECT_META}.parquet"
+    if not path.exists():
+        return None
+    return pl.read_parquet(path).select(
+        "defect_category", "defect_desc", "plain_english", "repair_area",
+        "effort", "forecourt_check")
 
 
 def selectable_vehicles() -> pl.DataFrame:
@@ -232,13 +253,25 @@ def build_profile(make: str, model: str, age_band: int) -> VehicleProfile:
                               age_band=(age_band, age_band + 3), n_tests=0,
                               failure_rate=None)
 
-    top = (t["top_defects"]
-           .filter((pl.col("make") == make) & (pl.col("model") == model)
-                   & (pl.col("age_band") == age_band))
-           .sort("n_tests", descending=True).head(10)
-           .select(category="defect_category", defect="defect_desc",
-                   n_tests="n_tests", share_of_tests="share_of_tests")
-           .to_dicts())
+    defects = (t["top_defects"]
+               .filter((pl.col("make") == make) & (pl.col("model") == model)
+                       & (pl.col("age_band") == age_band))
+               .sort("n_tests", descending=True).head(10))
+    # Joined here rather than in the page, so the summary is given the same
+    # words the reader sees. These are model-written, but they only exist in
+    # the Parquet at all if they passed defect_labels.validate and had the
+    # overrides applied — by the time they reach this line they have been
+    # checked and read, which is what makes them safe to hand back to a model.
+    labels = defect_labels()
+    if labels is not None:
+        defects = defects.join(labels, on=["defect_category", "defect_desc"],
+                               how="left")
+    top = [{"category": r["defect_category"], "defect": r["defect_desc"],
+            "n_tests": r["n_tests"], "share_of_tests": r["share_of_tests"],
+            "plain_english": r.get("plain_english"),
+            "repair_area": r.get("repair_area"), "effort": r.get("effort"),
+            "forecourt_check": r.get("forecourt_check")}
+           for r in defects.to_dicts()]
 
     miles = [{"mileage_band": mileage_label(r["band"]), "n_tests": r["n_tests"],
               "failure_rate": r["failure_rate"]}

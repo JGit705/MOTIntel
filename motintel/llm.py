@@ -85,8 +85,16 @@ def render_data_block(profile: VehicleProfile) -> str:
     if p.top_defects:
         lines.append("\nMost common failure items (share of tests in group):")
         for d in p.top_defects:
+            # The plain-English reading where the enrichment has produced one,
+            # so the summary can say "a suspension ball joint is worn" instead
+            # of reciting "Suspension: ball joint excessively worn". These are
+            # in the profile only if they passed the Phase 2 checks and the
+            # overrides, so they are reviewed data by the time they get here.
+            plain = d.get("plain_english")
             lines.append(f"  - {d['category']}: {d['defect']} "
-                         f"— {d['n_tests']:,} tests ({d['share_of_tests']:.1%})")
+                         f"— {d['n_tests']:,} tests ({d['share_of_tests']:.1%})"
+                         + (f"\n      in plain English: {plain}" if plain
+                            else ""))
 
     if p.by_mileage:
         lines.append("\nFailure rate by odometer band (all ages of this model):")

@@ -293,6 +293,17 @@ validation, and errors rather than silently lapsing if the wording it was
 written against changes. The record of where a human overruled the model is
 part of the repository, not an untracked edit to a binary file.
 
+What the reader gets for it: failure reasons headlined in plain English with
+the DVSA wording kept underneath, a breakdown of **where** a model's failures
+cluster — a car that fails on suspension is a different purchase from one that
+fails on corrosion, and fifteen DVSA categories hide that — and a list of what
+to actually check when viewing one. Where nothing about a fault can be seen
+outside a workshop the list says so and stops, which is the usual answer.
+Effort is printed as "small job / medium job / big job", never minor/major:
+DVSA grades severity with those words on the same page, and worn brake pads are
+a small job and a dangerous fault at once. Without the enrichment the app runs
+exactly as before, in DVSA wording.
+
 ### Tests
 
 ```bash

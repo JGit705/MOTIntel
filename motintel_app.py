@@ -164,7 +164,9 @@ avg_age = float(mrow["avg_age"][0]) if not mrow.is_empty() else None
 # The profile carries the defect rows under the names the model reads them by;
 # the panels want their column names, so map rather than re-query.
 DEFECT_SCHEMA = {"defect_category": pl.Utf8, "defect_desc": pl.Utf8,
-                 "n_tests": pl.Int64, "share_of_tests": pl.Float64}
+                 "n_tests": pl.Int64, "share_of_tests": pl.Float64,
+                 "plain_english": pl.Utf8, "repair_area": pl.Utf8,
+                 "effort": pl.Utf8, "forecourt_check": pl.Utf8}
 top = (pl.DataFrame(profile.top_defects)
        .rename({"category": "defect_category", "defect": "defect_desc"})
        if profile.top_defects else pl.DataFrame(schema=DEFECT_SCHEMA))
@@ -287,7 +289,30 @@ def panel_summary() -> None:
                                 "per minute. Every figure here is unaffected.")
 
 
+# DVSA grades a defect Minor, Major or Dangerous, and those words are on the
+# next panel across. The enrichment's "effort" is a different thing entirely —
+# the size of the job, not how serious the fault is — and calling it
+# minor/major beside a severity panel that also says minor/major is how a
+# reader concludes that worn brake pads are nothing to worry about.
+JOB_SIZE = {"minor": "small job", "moderate": "medium job",
+            "major": "big job"}
+
+
+def _job_pill(effort: str | None) -> str:
+    if not effort:
+        return ""
+    tone = {"minor": ("good", "good_soft"), "moderate": ("warn", "warn_soft"),
+            "major": ("bad", "bad_soft")}[effort]
+    return c.badge(JOB_SIZE[effort], p[tone[0]], p[tone[1]])
+
+
 def panel_defects(limit: int = 5) -> None:
+    """The failure reasons, in plain English where the enrichment has run.
+
+    The DVSA wording stays underneath rather than being replaced: it is the
+    record, the rewrite is an interpretation of it, and a reader who wants to
+    check one against the other should not have to leave the page.
+    """
     with st.container(border=True):
         shown, total = min(limit, len(top)), len(top)
         html(c.card_header(
@@ -298,24 +323,134 @@ def panel_defects(limit: int = 5) -> None:
                  'breakdown for this group.</div>')
             return
         biggest = float(top["share_of_tests"].max())
+        shown_rows = top.head(limit).to_dicts()
+        # Without the enrichment there is nothing to put in the repair column,
+        # and a header over an empty column reads as missing data.
+        labelled = any(d.get("plain_english") for d in shown_rows)
         rows = ""
-        for i, r in enumerate(top.head(limit).to_dicts(), 1):
+        for i, r in enumerate(shown_rows, 1):
             colour = p["bad"] if i <= 2 else p["warn"] if i <= 4 else p["accent"]
+            plain = r.get("plain_english")
+            headline = escape(plain) if plain else escape(r["defect_category"])
+            under = (f'{escape(r["defect_category"])} — '
+                     f'{escape(r["defect_desc"])}' if plain
+                     else escape(r["defect_desc"]))
+            pill = (f'<td style="white-space:nowrap">'
+                    f'{_job_pill(r.get("effort"))}</td>' if labelled else "")
             rows += (
                 f'<tr><td class="rk">{i}</td>'
                 f'<td style="width:14px"><span class="dot" '
                 f'style="background:{colour}"></span></td>'
-                f'<td><div class="nm">{r["defect_category"]}</div>'
-                f'<div class="sub">{r["defect_desc"]}</div></td>'
+                f'<td><div class="nm">{headline}</div>'
+                f'<div class="sub">{under}</div></td>{pill}'
                 f'<td class="num">{r["share_of_tests"]:.1%}</td>'
-                f'<td style="width:34%">'
+                f'<td style="width:26%">'
                 f'{c.bar(r["share_of_tests"] / biggest, colour)}</td></tr>')
+        note = ('Share of all tests in this group, not of failures. One test '
+                'can carry several defects.')
+        if labelled:
+            note += (' The headline is a plain-English reading of the DVSA '
+                     'wording beneath it; the job size is how big the repair '
+                     'is, which is not the same as how serious the fault is.')
+        repair_th = "<th>Repair</th>" if labelled else ""
         html(f'<table class="tbl"><thead><tr><th>#</th><th></th>'
-             f'<th>Failure reason</th><th>Rate</th><th></th></tr></thead>'
-             f'<tbody>{rows}</tbody></table>'
+             f'<th>Failure reason</th>{repair_th}<th>Rate</th><th></th>'
+             f'</tr></thead><tbody>{rows}</tbody></table>'
              f'<div style="font-size:11.5px;color:var(--faint);margin-top:10px">'
-             f'Share of all tests in this group, not of failures. One test can '
-             f'carry several defects.</div>')
+             f'{note}</div>')
+
+
+def panel_repair_areas() -> None:
+    """Where this model's failures cluster.
+
+    A car that mostly fails on suspension is a different purchase from one that
+    mostly fails on corrosion, and fifteen DVSA categories hide that: "Body,
+    chassis, structure" spans a loose numberplate and a rotten sill.
+
+    Weights are a share of the ten listed reasons, not of tests. Summing the
+    per-defect test counts would double-count any test carrying two defects in
+    the same area, and there is no way to undo that from this grain.
+    """
+    with st.container(border=True):
+        html(c.card_header("Where the failures are", "cog", p["accent_2"],
+                           pill="Top ten reasons"))
+        if top.is_empty():
+            html('<div style="color:var(--muted);font-size:13px">No defect '
+                 'breakdown for this group.</div>')
+            return
+        rows = [r for r in top.to_dicts() if r.get("repair_area")]
+        if not rows:
+            html('<div style="color:var(--muted);font-size:13px">Plain-English '
+                 'grouping needs the enrichment step — run '
+                 '<code>python -m motintel.enrich</code>.</div>')
+            return
+        by_area: dict[str, int] = {}
+        for r in rows:
+            by_area[r["repair_area"]] = (by_area.get(r["repair_area"], 0)
+                                         + r["n_tests"])
+        total_items = sum(by_area.values()) or 1
+        ordered = sorted(by_area.items(), key=lambda kv: -kv[1])
+        biggest = ordered[0][1]
+        body = ""
+        for area, n in ordered:
+            # Sentence case in Python, not text-transform:capitalize, which
+            # renders "Tyres And Wheels".
+            body += (f'<tr><td class="nm">'
+                     f'{escape(area[:1].upper() + area[1:])}</td>'
+                     f'<td class="num">{n / total_items:.0%}</td>'
+                     f'<td style="width:58%">'
+                     f'{c.bar(n / biggest, p["accent"])}</td></tr>')
+        html(f'<table class="tbl"><tbody>{body}</tbody></table>'
+             f'<div style="font-size:11.5px;color:var(--faint);margin-top:10px">'
+             f'Share of this model\'s ten commonest failure reasons, by the '
+             f'part of the car a buyer thinks in. Not a share of tests: one '
+             f'test can carry several defects.</div>')
+
+
+def panel_forecourt() -> None:
+    """What to look at when viewing the car.
+
+    The first thing in this app a reader can act on, and it exists only because
+    of the enrichment. Where nothing can be checked by eye it says so: most MOT
+    failures are not visible from outside a workshop, and a list of invented
+    things to look at would be worse than a short one.
+    """
+    with st.container(border=True):
+        html(c.card_header("What to check when viewing one", "check",
+                           p["good"], pill=f"{make.title()} {model.title()}"))
+        if top.is_empty():
+            html('<div style="color:var(--muted);font-size:13px">No defect '
+                 'breakdown for this group.</div>')
+            return
+        rows = [r for r in top.to_dicts() if r.get("plain_english")]
+        if not rows:
+            html('<div style="color:var(--muted);font-size:13px">Needs the '
+                 'enrichment step — run <code>python -m motintel.enrich</code>.'
+                 '</div>')
+            return
+        seen, items = set(), ""
+        for r in rows:
+            check = r.get("forecourt_check")
+            if not check or check in seen:
+                continue
+            seen.add(check)
+            items += (f'<div class="fact" style="align-items:flex-start;'
+                      f'margin-bottom:9px">{c.icon("check", 15, p["good"])}'
+                      f'<span><b>{escape(check)}</b><br>'
+                      f'<span style="color:var(--muted);font-size:11.5px">'
+                      f'{escape(r["plain_english"])} — '
+                      f'{r["share_of_tests"]:.1%} of tests</span></span></div>')
+        if not items:
+            html('<div style="color:var(--muted);font-size:13px">None of this '
+                 'model\'s commonest failures can be seen from outside a '
+                 'workshop. That is the usual answer — brake wear, emissions '
+                 'and joint play all need the car on a ramp.</div>')
+            return
+        html(items)
+        html('<div style="font-size:11.5px;color:var(--faint);margin-top:4px">'
+             'Only the failures that can actually be seen or tried are listed, '
+             'commonest first. Most cannot be, and are left out rather than '
+             'turned into a check that would not reveal anything.</div>')
 
 
 def panel_mileage() -> None:
@@ -660,6 +795,12 @@ elif page == "Failure reasons":
         panel_defects(10)
     with r:
         panel_severity()
+    st.write("")
+    l, r = st.columns(2)
+    with l:
+        panel_repair_areas()
+    with r:
+        panel_forecourt()
 
 elif page == "Mileage analysis":
     panel_mileage()

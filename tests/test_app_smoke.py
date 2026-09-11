@@ -90,6 +90,50 @@ def check_ranking(at: AppTest) -> list[tuple[str, str, str]]:
     return failures
 
 
+def check_defect_panels(at: AppTest) -> list[tuple[str, str, str]]:
+    """The panels built on the enrichment, including the branch where it has
+    nothing to offer.
+
+    A vehicle whose commonest failures are all invisible from outside a
+    workshop is the normal case, not an edge one, and saying so is the point —
+    so it is driven explicitly rather than left to the sample.
+    """
+    from motintel import serving
+    failures = []
+    at.radio[0].set_value("Failure reasons").run()
+    labelled = serving.defect_labels() is not None
+
+    for make, model in [("FORD", "FIESTA"), ("MAZDA", "MX-5")]:
+        for band in bands_for(make, model):
+            try:
+                at.selectbox[0].set_value(make).run()
+                if model not in at.selectbox[1].options:
+                    break
+                at.selectbox[1].set_value(model).run()
+                if at.select_slider:
+                    at.select_slider[0].set_value(band).run()
+                if at.exception:
+                    failures.append((make, model, f"band {band}: "
+                                     f"{at.exception[0].message.strip().splitlines()[-1]}"))
+                    break
+            except Exception as e:
+                failures.append((make, model, f"band {band}: "
+                                 f"{type(e).__name__}: {e}"))
+                break
+
+    # Whichever way the enrichment has gone, the page has to say something
+    # honest rather than render an empty card.
+    page = " ".join(m.value for m in at.markdown)
+    if labelled:
+        wanted = ("Where the failures are", "What to check when viewing")
+    else:
+        wanted = ("Where the failures are", "python -m motintel.enrich")
+    for phrase in wanted:
+        if phrase not in page:
+            failures.append(("MAZDA", "MX-5", f"page is missing {phrase!r}"))
+    return failures
+
+
 def run() -> int:
     cases = vehicles()
     print(f"running the real app against {len(cases)} vehicles "
@@ -137,6 +181,7 @@ def run() -> int:
             failures.append((make, model, f"{type(e).__name__}: {e}"))
 
     failures += check_ranking(at)
+    failures += check_defect_panels(at)
 
     print(f"\nfailures: {len(failures)}")
     for f in failures[:15]:
