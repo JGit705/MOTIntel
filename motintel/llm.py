@@ -175,9 +175,17 @@ def summarise(profile: VehicleProfile, *, use_cache: bool = True) -> str | None:
             ),
         )
     except errors.ClientError as e:
-        # 4xx — bad or missing key, or the free tier's quota is spent.
-        log.warning("Gemini rejected the request (%s) — serving without a "
-                    "summary", getattr(e, "code", "4xx"))
+        # 4xx — bad or missing key, or the allowance is gone. Worth telling
+        # apart: one is a thing to fix, the other a thing to wait out, and
+        # "rejected the request (429)" reads like neither.
+        if getattr(e, "code", None) == 429:
+            spent = "per day" in str(e).lower() or "perday" in str(e).lower()
+            log.warning("Gemini quota exhausted (%s) — serving without a "
+                        "summary",
+                        "daily allowance" if spent else "rate limited")
+        else:
+            log.warning("Gemini rejected the request (%s) — serving without a "
+                        "summary", getattr(e, "code", "4xx"))
         return None
     except errors.ServerError:
         log.warning("Gemini unavailable — serving without a summary")
@@ -191,6 +199,15 @@ def summarise(profile: VehicleProfile, *, use_cache: bool = True) -> str | None:
 
     usage = response.usage_metadata
     summary = (response.text or "").strip()
+    # Why it stopped, before what it said. A summary cut off at the token
+    # ceiling is still a non-empty string, so without this the page shows half
+    # a sentence and caches it — the reasoning budget truncating a sparse
+    # answer is exactly how the thinking level came to be set to minimal.
+    reason = getattr((response.candidates or [None])[0], "finish_reason", None)
+    if reason is not None and reason != types.FinishReason.STOP:
+        log.warning("Gemini stopped early (%s) — serving without a summary",
+                    reason)
+        return None
     if not summary:
         # A safety filter or an empty candidate list, not an exception.
         log.warning("Gemini returned no text — serving without a summary")

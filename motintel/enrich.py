@@ -73,13 +73,26 @@ MAX_OUTPUT_TOKENS = 8192
 # The reply stays well inside MAX_OUTPUT_TOKENS at this size; a batch that
 # comes back short of ids is rejected and asked again.
 BATCH_SIZE = 50
-# A run is ~21 requests, and the free tier answers a fair number of them with
-# "high demand, try again later". Two immediate retries lost the whole run to
-# one 503, so attempts back off: 2s, 4s, 8s, 16s, jittered so a retry does not
-# land in the same instant as everything else that was rejected with it.
+# The free tier answers a fair number of requests with "high demand, try again
+# later". Two immediate retries lost a whole run to one 503, so attempts back
+# off: 2s, 4s, 8s, 16s, jittered so a retry does not land in the same instant
+# as everything else that was rejected alongside it.
 ATTEMPTS = 5
 BACKOFF_BASE_S = 2.0
 BACKOFF_CAP_S = 30.0
+
+# A reply that failed validation gets one more go, not five. Temperature is
+# zero, so asking again sends byte-for-byte the same request; the odds it comes
+# back different are low and each attempt costs a request out of twenty.
+# Transient failures are worth the full ATTEMPTS because nothing about the
+# request was wrong.
+VALIDATION_ATTEMPTS = 2
+
+# Attempts, not successes. A rejected request appears to count against the
+# allowance — a run that cached eight batches had spent far more than eight of
+# the day's twenty — so the run is planned against a budget rather than left to
+# discover the ceiling by hitting it on the last batch. Raise it for a paid key.
+REQUEST_BUDGET = int(os.environ.get("MOTINTEL_REQUEST_BUDGET", "20"))
 
 # Closed sets. The model picks from these or the batch is rejected — an
 # open-ended label is how you end up with "brakes", "braking" and "brake
@@ -225,6 +238,16 @@ def _check_batch(batch: list[Pair], rows: list[dict]) -> list[dict]:
     return rows
 
 
+class Truncated(EnrichmentError):
+    """The reply ran out of output budget mid-JSON.
+
+    Its own type because it is the one failure that retrying cannot fix: at
+    temperature zero the next attempt truncates in the same place, so five
+    attempts spend five requests to learn what the first one said. The caller
+    stops and says which knob to turn.
+    """
+
+
 def _ask(batch: list[Pair], client: genai.Client) -> list[dict]:
     response = client.models.generate_content(
         model=MODEL,
@@ -239,9 +262,45 @@ def _ask(batch: list[Pair], client: genai.Client) -> list[dict]:
                 thinking_level=THINKING_LEVEL),
         ),
     )
+    # Why the model stopped, before what it said. A truncated reply is partial
+    # JSON, and read without this it looks like a malformed one and gets asked
+    # for again four more times.
+    reason = getattr(
+        (response.candidates or [None])[0], "finish_reason", None)
+    if reason == types.FinishReason.MAX_TOKENS:
+        raise Truncated(
+            f"the reply hit the {MAX_OUTPUT_TOKENS}-token output ceiling "
+            f"part-way through a batch of {len(batch)}. Lower BATCH_SIZE or "
+            f"raise MAX_OUTPUT_TOKENS — retrying cannot help.")
+    if reason not in (None, types.FinishReason.STOP):
+        raise EnrichmentError(f"the model stopped early: {reason}")
     if not (response.text or "").strip():
         raise EnrichmentError("empty response")
     return json.loads(response.text)
+
+
+@dataclass
+class Budget:
+    """How many requests this run may still spend.
+
+    Counts attempts rather than successes, because a rejected request appears
+    to count against the allowance too. Exists so the run can say up front that
+    it does not have the budget to finish, instead of labelling nine batches
+    and then dying on the tenth with a wall of quota JSON.
+    """
+    remaining: int
+
+    def spend(self) -> None:
+        if self.remaining <= 0:
+            raise OutOfBudget(
+                f"the run's request budget is spent. Raise it with "
+                f"MOTINTEL_REQUEST_BUDGET if this key is not on the free "
+                f"tier's {REQUEST_BUDGET}/day.")
+        self.remaining -= 1
+
+
+class OutOfBudget(EnrichmentError):
+    """Stopped by our own accounting rather than by the API. Never retried."""
 
 
 def _retryable(e: Exception) -> bool:
@@ -264,11 +323,23 @@ def _retryable(e: Exception) -> bool:
     # with a traceback.
     if isinstance(e, (httpx.TimeoutException, httpx.NetworkError)):
         return True
+    # Truncation repeats at temperature zero and our own budget stop is not
+    # the API's opinion — neither is worth another request.
+    if isinstance(e, (Truncated, OutOfBudget)):
+        return False
     return isinstance(e, (EnrichmentError, json.JSONDecodeError))
 
 
 def _daily_quota_spent(e: Exception) -> bool:
-    return "PerDay" in str(e)
+    """Whether a 429 is the day's allowance rather than a per-minute limit.
+
+    Read off the quotaId Google returns — `...RequestsPerDayPerProject...` —
+    with the prose form allowed for too, since the wording of the message is
+    not a stable interface and the distinction decides whether the run waits
+    or stops.
+    """
+    text = str(e).lower()
+    return "perday" in text or "per day" in text
 
 
 def _backoff(attempt: int) -> float:
@@ -281,7 +352,7 @@ def _brief(e: Exception) -> str:
     return text[:110] + "…" if len(text) > 110 else text
 
 
-def _batch(batch: list[Pair], client: genai.Client) -> list[dict]:
+def _batch(batch: list[Pair], client, budget: Budget) -> list[dict]:
     """One batch, from cache if it is there. Validation happens before the
     write, so the cache can only ever hold batches that passed."""
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -290,9 +361,13 @@ def _batch(batch: list[Pair], client: genai.Client) -> list[dict]:
         return json.loads(path.read_text())["rows"]
 
     last: Exception | None = None
+    allowed = ATTEMPTS
     for attempt in range(1, ATTEMPTS + 1):
+        if attempt > allowed:
+            break
         try:
-            rows = _check_batch(batch, _ask(batch, client))
+            budget.spend()
+            rows = _check_batch(batch, _ask(batch, client()))
         # Broad on purpose: the transport raises its own exceptions, and an
         # unrecognised one must reach _retryable to be judged rather than
         # escape the loop. Anything it declines is re-raised immediately.
@@ -301,9 +376,14 @@ def _batch(batch: list[Pair], client: genai.Client) -> list[dict]:
                 raise EnrichmentError(
                     f"batch starting at id {batch[0].id}: {e}") from e
             last = e
+            # A reply we rejected is a different kind of failure from a server
+            # that was busy: the request was fine, so sending it again asks for
+            # the same thing. One more go, then stop.
+            if not isinstance(e, (errors.APIError, httpx.HTTPError)):
+                allowed = min(allowed, VALIDATION_ATTEMPTS)
             log.warning("batch at id %d, attempt %d/%d: %s",
-                        batch[0].id, attempt, ATTEMPTS, _brief(e))
-            if attempt < ATTEMPTS:
+                        batch[0].id, attempt, allowed, _brief(e))
+            if attempt < allowed:
                 time.sleep(_backoff(attempt))
             continue
         path.write_text(json.dumps(
@@ -311,19 +391,43 @@ def _batch(batch: list[Pair], client: genai.Client) -> list[dict]:
              "items": _render(batch), "rows": rows}, indent=2))
         return rows
     raise EnrichmentError(
-        f"batch starting at id {batch[0].id} did not survive {ATTEMPTS} "
+        f"batch starting at id {batch[0].id} did not survive {allowed} "
         f"attempts: {last}")
 
 
-def enrich(pairs: list[Pair] | None = None) -> pl.DataFrame:
+def _lazy_client():
+    """Build the client on first use, not on entry.
+
+    google-genai raises at construction when there is no key, so building it up
+    front made a fully-cached run — which sends nothing — fail without one.
+    Once the labelling is done that is the common case: rebuilding the Parquet,
+    changing how the table is assembled, or re-running the stage as part of the
+    pipeline should all cost nothing and need no credentials.
+    """
+    held = []
+
+    def client():
+        if not held:
+            held.append(genai.Client(
+                http_options=types.HttpOptions(timeout=REQUEST_TIMEOUT_MS)))
+        return held[0]
+    return client
+
+
+def batches_needed(pairs: list[Pair]) -> int:
+    return -(-len(pairs) // BATCH_SIZE)
+
+
+def enrich(pairs: list[Pair] | None = None,
+           budget: Budget | None = None) -> pl.DataFrame:
     """Label every pair and return the table, cache-first throughout.
 
-    Idempotent: a second run with the same pairs and settings makes no API
-    calls at all.
+    Idempotent, and idempotent without credentials: a second run with the same
+    pairs and settings sends nothing and needs no key.
     """
     pairs = pairs if pairs is not None else defect_pairs()
-    client = genai.Client(
-        http_options=types.HttpOptions(timeout=REQUEST_TIMEOUT_MS))
+    budget = budget if budget is not None else Budget(REQUEST_BUDGET)
+    client = _lazy_client()
     by_id = {p.id: p for p in pairs}
     out = []
     for start in range(0, len(pairs), BATCH_SIZE):
@@ -331,7 +435,7 @@ def enrich(pairs: list[Pair] | None = None) -> pl.DataFrame:
         cached = (CACHE_DIR / f"{_cache_key(batch)}.json").exists()
         print(f"  {start + 1:>4}-{start + len(batch):<4} of {len(pairs)}"
               f"{'  (cached)' if cached else ''}", flush=True)
-        for r in _batch(batch, client):
+        for r in _batch(batch, client, budget):
             p = by_id[r["id"]]
             out.append({"defect_category": p.category,
                         "defect_desc": p.description,
@@ -347,18 +451,37 @@ def enrich(pairs: list[Pair] | None = None) -> pl.DataFrame:
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     pairs = defect_pairs()
+    todo = [start for start in range(0, len(pairs), BATCH_SIZE)
+            if not (CACHE_DIR / f"{_cache_key(pairs[start:start + BATCH_SIZE])}"
+                    ".json").exists()]
+    budget = Budget(REQUEST_BUDGET)
     print(f"labelling {len(pairs)} defect descriptions in batches of "
           f"{BATCH_SIZE}")
+    print(f"{batches_needed(pairs) - len(todo)} of {batches_needed(pairs)} "
+          f"batches already cached; {len(todo)} to fetch, "
+          f"budget {budget.remaining}")
+    if len(todo) > budget.remaining:
+        # Better to say so now than to label most of them and stop.
+        print(f"\nnot enough budget to finish: {len(todo)} batches needed, "
+              f"{budget.remaining} requests allowed. Raise "
+              f"MOTINTEL_REQUEST_BUDGET on a paid key, or run again after the "
+              f"free tier's daily reset — cached batches are kept.")
+        return 1
     try:
-        table = enrich(pairs)
+        table = enrich(pairs, budget)
     except EnrichmentError as e:
         done = len(list(CACHE_DIR.glob("*.json"))) if CACHE_DIR.exists() else 0
+        if isinstance(e, Truncated):
+            print(f"\nstopped: {e}")
+            print(f"{done} batches cached and reusable.")
+            print("nothing written — a partly-labelled mapping must not ship")
+            return 1
         if _daily_quota_spent(e):
             # The wall of quota JSON says all of this, and buries it.
             print("\nstopped: the free tier's daily request allowance is "
                   "spent.")
-            print(f"{done} of {-(-len(pairs) // BATCH_SIZE)} batches are "
-                  f"cached; re-running tomorrow picks up where this left off.")
+            print(f"{done} of {batches_needed(pairs)} batches are cached; "
+                  f"re-running tomorrow picks up where this left off.")
         else:
             print(f"\nstopped: {e}")
             print(f"{done} batches cached and reusable.")

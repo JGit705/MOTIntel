@@ -138,6 +138,101 @@ def check_retry_policy(fail) -> None:
         fail("a per-minute limit was mistaken for the daily allowance")
 
 
+def check_budget(fail) -> None:
+    budget = enrich.Budget(2)
+    budget.spend()
+    budget.spend()
+    try:
+        budget.spend()
+    except enrich.OutOfBudget:
+        pass
+    else:
+        return fail("the budget spent more requests than it had")
+    if enrich._retryable(enrich.OutOfBudget("spent")):
+        fail("running out of our own budget was treated as worth retrying")
+
+    # A cold run has to be plannable: the budget must cover the batches, or
+    # main() should say so before labelling most of them and stopping.
+    pairs = enrich.defect_pairs()
+    if enrich.batches_needed(pairs) > enrich.REQUEST_BUDGET:
+        fail(f"a cold run needs {enrich.batches_needed(pairs)} batches "
+             f"against a budget of {enrich.REQUEST_BUDGET}")
+
+
+def check_truncation(fail) -> None:
+    """Truncation must never be retried.
+
+    It is the expensive mistake this stage can make: partial JSON reads as a
+    malformed reply, and at temperature zero four more attempts spend four more
+    requests to be truncated in the same place.
+    """
+    if enrich._retryable(enrich.Truncated("hit the ceiling")):
+        fail("a truncated reply was treated as worth retrying")
+    if not issubclass(enrich.Truncated, EnrichmentError):
+        fail("Truncated does not stop the run")
+
+    class _Candidate:
+        def __init__(self, reason):
+            self.finish_reason = reason
+
+    class _Response:
+        def __init__(self, reason, text):
+            self.candidates = [_Candidate(reason)]
+            self.text = text
+
+    from google.genai import types as gtypes
+    seen = {}
+
+    class _Models:
+        def generate_content(self, **kwargs):
+            return seen["response"]
+
+    class _Client:
+        models = _Models()
+
+    pairs = enrich.defect_pairs()[:2]
+    cases = [
+        ("a truncated reply", gtypes.FinishReason.MAX_TOKENS, '[{"id": 0',
+         enrich.Truncated),
+        ("a safety stop", gtypes.FinishReason.SAFETY, "", EnrichmentError),
+        ("an empty reply", gtypes.FinishReason.STOP, "  ", EnrichmentError),
+    ]
+    for what, reason, text, expected in cases:
+        seen["response"] = _Response(reason, text)
+        try:
+            enrich._ask(pairs, _Client())
+        except expected:
+            continue
+        except Exception as e:
+            fail(f"{what}: raised {type(e).__name__}, wanted "
+                 f"{expected.__name__}")
+            continue
+        fail(f"{what}: was accepted")
+
+
+def check_lazy_client(fail) -> None:
+    """A fully-cached run sends nothing, so it must not need a key.
+
+    google-genai raises at construction without one, and building the client on
+    entry made every re-run need credentials, including the ones that send
+    nothing at all.
+    """
+    client = enrich._lazy_client()
+    if not callable(client):
+        return fail("_lazy_client did not return something callable")
+    import os
+    saved = {k: os.environ.pop(k, None)
+             for k in ("GEMINI_API_KEY", "GOOGLE_API_KEY")}
+    try:
+        enrich._lazy_client()  # must not raise: nothing has asked for it yet
+    except Exception as e:
+        fail(f"building the lazy client needed a key up front: {e}")
+    finally:
+        for k, v in saved.items():
+            if v is not None:
+                os.environ[k] = v
+
+
 def check_backoff(fail) -> None:
     # Jittered, so the assertion is on the band rather than the value.
     for attempt in range(1, enrich.ATTEMPTS + 1):
@@ -155,11 +250,14 @@ def run() -> int:
     # The first two read the exported Parquet, which is gitignored, so they sit
     # out a checkout that has no data rather than failing it. Skipping loudly
     # beats a green tick over checks that never ran.
-    needs_data = {"pairs", "cache key", "validation"}
+    needs_data = {"pairs", "cache key", "validation", "budget", "truncation"}
     have_data = enrich.SOURCE.exists()
     checks = [("pairs", check_pairs), ("cache key", check_cache_key),
               ("validation", check_validation),
-              ("retry policy", check_retry_policy), ("backoff", check_backoff)]
+              ("retry policy", check_retry_policy),
+              ("budget", check_budget), ("truncation", check_truncation),
+              ("lazy client", check_lazy_client),
+              ("backoff", check_backoff)]
     for name, check in checks:
         if name in needs_data and not have_data:
             print(f"  {name}: skipped, no {enrich.SOURCE.name} in this "
