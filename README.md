@@ -257,6 +257,7 @@ into `data/raw/`: the 2025 results and failure-item extracts, plus `lookup.zip`
 ./.venv/bin/python -m motintel.model          # baseline vs logistic vs XGBoost
 ./.venv/bin/python -m motintel.export         # 1.8 MB serving layer
 ./.venv/bin/python -m motintel.enrich         # LLM pass over the defect wording
+./.venv/bin/python -m motintel.review         # read the labels before they ship
 ./.venv/bin/streamlit run motintel_app.py
 ```
 
@@ -277,12 +278,28 @@ is 11 requests. Each batch is cached on disk before the next is asked for, so a
 run interrupted by the allowance resumes where it stopped rather than starting
 again.
 
+Nothing the model writes reaches the app unchecked. Before the Parquet is
+written, the whole table has to survive `motintel/defect_labels.py`: every
+description labelled exactly once and nothing invented, both categorical fields
+inside their closed sets, each sentence actually a sentence, no price, mileage
+or year anywhere in the free text, **every figure traceable to the description
+it came from**, and agreement with nine hand-written anchors spanning the
+effort range. Then `python -m motintel.review` builds a page of all 515 rows,
+commonest first, with a running share of every recorded failure beside each
+one — the top 7 rows cover half of all failures and the top 28 cover 95%, so
+it is visible where reading stops paying. Disagreements go into
+`motintel/defect_overrides.json`, which is committed, applied before
+validation, and errors rather than silently lapsing if the wording it was
+written against changes. The record of where a human overruled the model is
+part of the repository, not an untracked edit to a binary file.
+
 ### Tests
 
 ```bash
 ./.venv/bin/python -m tests.test_app_smoke        # drives the real app
 ./.venv/bin/python -m tests.test_llm_grounding    # prompt + grounding checks
 ./.venv/bin/python -m tests.test_enrich           # the enrichment stage, offline
+./.venv/bin/python -m tests.test_defect_labels    # the label contract, offline
 ```
 
 `test_app_smoke` runs the app itself through Streamlit's `AppTest` over 158

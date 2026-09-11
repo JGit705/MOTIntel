@@ -49,6 +49,12 @@ jobs:
         # checks that read the exported Parquet skip themselves without it.
         run: python -m tests.test_enrich
 
+      - name: Defect label contract
+        # Also API-free: it builds a table that passes, breaks one thing at a
+        # time, and asserts the break is reported. Skips itself without the
+        # exported Parquet, which the anchors need something to match in.
+        run: python -m tests.test_defect_labels
+
       - name: App smoke test
         # The exported Parquet is gitignored, so this only runs where the data
         # has been produced. Skipping loudly beats a green tick that tested

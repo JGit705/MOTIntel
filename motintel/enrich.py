@@ -44,6 +44,8 @@ from google import genai
 from google.genai import errors, types
 
 from motintel.config import PROCESSED, ROOT
+from motintel.defect_labels import EFFORTS, REPAIR_AREAS, apply_overrides
+from motintel.defect_labels import validate as validate_labels
 
 # Its own process, inheriting nothing from the shell that ran the pipeline —
 # the same reason the app reads the file rather than trusting the environment.
@@ -94,16 +96,9 @@ VALIDATION_ATTEMPTS = 2
 # discover the ceiling by hitting it on the last batch. Raise it for a paid key.
 REQUEST_BUDGET = int(os.environ.get("MOTINTEL_REQUEST_BUDGET", "20"))
 
-# Closed sets. The model picks from these or the batch is rejected — an
-# open-ended label is how you end up with "brakes", "braking" and "brake
-# system" as three groups.
-REPAIR_AREAS = ("brakes", "suspension", "steering", "tyres and wheels",
-                "lights and electrics", "corrosion and structure",
-                "emissions and exhaust", "visibility",
-                "seatbelts and restraints", "other")
-# Effort, not cost. This dataset carries no pricing, and a number in pounds
-# would be the exact invention the whole project is built to avoid.
-EFFORTS = ("minor", "moderate", "major")
+# REPAIR_AREAS and EFFORTS come from defect_labels, which is also what the
+# validation and the Phase 4 regression suite read. Defining them here as well
+# is how the prompt and the checks come to allow different things.
 
 SYSTEM = f"""You are labelling UK MOT failure descriptions so a used-car buyer
 can understand them.
@@ -487,6 +482,25 @@ def main() -> int:
             print(f"{done} batches cached and reusable.")
         print("nothing written — a partly-labelled mapping must not ship")
         return 1
+    # The corrections from the human read go on before anything is checked or
+    # written, so what is validated is what ships.
+    try:
+        table = apply_overrides(table)
+    except ValueError as e:
+        print(f"\nstopped: {e}")
+        return 1
+
+    problems = validate_labels(table, [(p.category, p.description)
+                                       for p in pairs])
+    if problems:
+        print(f"\n{len(problems)} problem(s) with the labelling:")
+        for problem in problems[:20]:
+            print(f"  {problem}")
+        if len(problems) > 20:
+            print(f"  ...and {len(problems) - 20} more")
+        print("nothing written — see AI_PLAN phase 2")
+        return 1
+
     table.write_parquet(OUTPUT, compression="zstd")
     print(f"\n{len(table):,} labelled -> {OUTPUT.name} "
           f"({OUTPUT.stat().st_size / 1024:.0f} KB)")

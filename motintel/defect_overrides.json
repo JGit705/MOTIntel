@@ -1,0 +1,25 @@
+{
+  "_readme": [
+    "Corrections to the model's defect labels, from reading them.",
+    "",
+    "Keyed 'DVSA category||DVSA description', exactly as they appear in",
+    "top_defects.parquet. Generate the review page with",
+    "'python -m motintel.review' — it prints the key for every row.",
+    "",
+    "Each entry replaces only the fields it names; the rest stand as the",
+    "model wrote them. Committed on purpose: this file is the record of every",
+    "place a human disagreed with the model, and 'python -m motintel.enrich'",
+    "applies it before validating and writing, so the shipped mapping is",
+    "reproducible from the cache plus this file.",
+    "",
+    "An override matching no defect stops the run rather than being ignored:",
+    "it means the wording it was written against has changed and the",
+    "correction has quietly stopped applying.",
+    "",
+    "Example:",
+    "  \"Brakes||less than 1.5 mm thick\": {",
+    "    \"effort\": \"minor\",",
+    "    \"plain_english\": \"A brake pad or shoe is worn past its safe limit.\"",
+    "  }"
+  ]
+}

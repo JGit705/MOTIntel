@@ -62,10 +62,19 @@ def build(con: duckdb.DuckDBPyConnection) -> None:
             t.test_class_id,
             d.rfr_id,
             d.rfr_type_code,
-            det.rfr_desc                    AS defect_desc,
-            det.rfr_insp_manual_desc        AS defect_manual_desc,
+            -- Trimmed at the source. The lookup carries the same wording
+            -- with and without a trailing space -- 'less than 1.5 mm thick'
+            -- and 'less than 1.5 mm thick ' are separate rows in
+            -- lu_item_detail -- so 43 descriptions and 11,227 defect rows
+            -- split into near-duplicates, and eleven vehicle/age groups
+            -- listed the identical fault twice in the app. Fixed here rather
+            -- than in the export so the DuckDB query path sees it too, and so
+            -- the enrichment stage is not paid to label the same string
+            -- twice.
+            trim(det.rfr_desc)              AS defect_desc,
+            trim(det.rfr_insp_manual_desc)  AS defect_manual_desc,
             det.rfr_deficiency_category     AS deficiency_category,
-            grp.item_name                   AS defect_category
+            trim(grp.item_name)             AS defect_category
         FROM raw_defects d
         JOIN analytical_tests t USING (test_id)
         LEFT JOIN lu_item_detail det
