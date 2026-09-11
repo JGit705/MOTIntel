@@ -56,9 +56,44 @@ def bands_for(make: str, model: str) -> list[int]:
             .sort("age_band")["age_band"].to_list())
 
 
+# Every page, not just the one the app opens on. The panels below the fold
+# were never being rendered: the harness drove the controls and read the
+# Overview, so a crash in any other section went unseen. Vehicles are dealt out
+# across the pages in blocks, which costs one extra rerun per block rather than
+# one per vehicle.
+PAGES = ["Overview", "Reliability", "Failure reasons", "Mileage analysis",
+         "Comparison"]
+
+
+def check_ranking(at: AppTest) -> list[tuple[str, str, str]]:
+    """The ranking panel's own edge cases, kept explicit rather than left to
+    the sample: a car that is in the table, one that is excluded from it for
+    thin mileage coverage, and the oldest band, where the table is shortest."""
+    failures = []
+    at.radio[0].set_value("Reliability").run()
+    for make, model, band, note in [("FORD", "FIESTA", 12, "ranked"),
+                                    ("AUDI", "R8", 12, "excluded, no coverage"),
+                                    ("FORD", "FIESTA", 27, "oldest band")]:
+        try:
+            at.selectbox[0].set_value(make).run()
+            if model not in at.selectbox[1].options:
+                failures.append((make, model, f"{note}: not selectable"))
+                continue
+            at.selectbox[1].set_value(model).run()
+            if band in bands_for(make, model) and at.select_slider:
+                at.select_slider[0].set_value(band).run()
+            if at.exception:
+                failures.append((make, model, f"{note}: "
+                                 f"{at.exception[0].message.strip().splitlines()[-1]}"))
+        except Exception as e:
+            failures.append((make, model, f"{note}: {type(e).__name__}: {e}"))
+    return failures
+
+
 def run() -> int:
     cases = vehicles()
-    print(f"running the real app against {len(cases)} vehicles")
+    print(f"running the real app against {len(cases)} vehicles "
+          f"across {len(PAGES)} pages")
     failures = []
     at = AppTest.from_file(str(APP), default_timeout=90)
     at.run()
@@ -66,7 +101,11 @@ def run() -> int:
         print(f"  cold start raised: {at.exception[0].message}")
         return 1
 
-    for make, model in cases:
+    block = max(1, len(cases) // len(PAGES))
+    for i, (make, model) in enumerate(cases):
+        page = PAGES[min(i // block, len(PAGES) - 1)]
+        if at.radio[0].value != page:
+            at.radio[0].set_value(page).run()
         try:
             at.selectbox[0].set_value(make).run()
             opts = at.selectbox[1].options
@@ -96,6 +135,8 @@ def run() -> int:
                     break
         except Exception as e:  # harness-level problem, still a failure
             failures.append((make, model, f"{type(e).__name__}: {e}"))
+
+    failures += check_ranking(at)
 
     print(f"\nfailures: {len(failures)}")
     for f in failures[:15]:

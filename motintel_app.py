@@ -471,6 +471,94 @@ def panel_agecurve() -> None:
              'still takes an MOT at 25 is the maintained minority.</div>')
 
 
+# How many rows the ranking shows at each end. A scrollable list of two
+# thousand trim variants is not something anyone reads; the ends of the
+# distribution and your own car are the whole of what the question was.
+RANK_HEAD, RANK_TAIL = 12, 5
+
+
+def _rank_row(r: dict, position: int, mine: bool) -> str:
+    lo = max(0.0, r["standardised"] - r["margin"])
+    hi = r["standardised"] + r["margin"]
+    return (f'<tr class="{"me" if mine else ""}">'
+            f'<td class="rk">{position:,}</td>'
+            f'<td><div class="nm">{escape(r["make"].title())} '
+            f'{escape(r["model"].title())}</div>'
+            f'<div class="sub">{lo:.1%}–{hi:.1%} at 95%</div></td>'
+            f'<td class="num">{r["standardised"]:.1%}</td>'
+            f'<td class="num" style="color:var(--muted);font-weight:500">'
+            f'{r["observed"]:.1%}</td>'
+            f'<td class="num" style="color:var(--muted);font-weight:500">'
+            f'{r["n_tests"]:,}</td></tr>')
+
+
+def panel_reliability_ranking() -> None:
+    """Ranked like-for-like on mileage — see serving.reliability_ranking for
+    why a plain sort of the observed column ranks garage queens.
+
+    Built as HTML rather than st.dataframe on purpose. The dataframe widget
+    paints to a canvas themed from config.toml, which is pinned to dark, so it
+    stayed dark in light mode and no amount of CSS reached it. Every other
+    panel here is HTML or Plotly, both of which follow the palette.
+    """
+    ranked = serving.reliability_ranking(age_band)
+    with st.container(border=True):
+        html(c.card_header("Most and least reliable at this age", "check",
+                           p["good"], pill=f"{age_band}\u2013{age_band + 3} years"))
+        if ranked.is_empty():
+            html('<div style="color:var(--muted);font-size:13px">No models in '
+                 'this age group have cars across enough of the mileage range '
+                 'to rank fairly.</div>')
+            return
+
+        rows = ranked.to_dicts()
+        total = len(rows)
+        mine = next((i for i, r in enumerate(rows)
+                     if r["make"] == make and r["model"] == model), None)
+
+        if mine is not None:
+            r = rows[mine]
+            html(f'<div style="font-size:12.5px;color:var(--muted);'
+                 f'margin:-2px 0 12px">{escape(make.title())} '
+                 f'{escape(model.title())} ranks <b>{mine + 1:,} of '
+                 f'{total:,}</b> at this age, at <b>{r["standardised"]:.1%}</b> '
+                 f'once mileage is levelled out — against '
+                 f'<b>{r["observed"]:.1%}</b> as tested.</div>')
+        else:
+            html('<div style="font-size:12.5px;color:var(--muted);'
+                 'margin:-2px 0 12px">This car is not in the table. Its cars '
+                 'in this age group do not span enough of the mileage range '
+                 'for a like-for-like comparison, and guessing at the rest '
+                 'would be worse than leaving it out.</div>')
+
+        head = list(range(min(RANK_HEAD, total)))
+        tail = [i for i in range(max(total - RANK_TAIL, len(head)), total)]
+        shown = sorted(set(head) | set(tail) | ({mine} if mine is not None
+                                                else set()))
+        body, previous = "", None
+        for i in shown:
+            if previous is not None and i > previous + 1:
+                body += (f'<tr><td colspan="5" style="text-align:center;'
+                         f'color:var(--faint);font-size:11px;padding:7px">'
+                         f'{i - previous - 1:,} more</td></tr>')
+            body += _rank_row(rows[i], i + 1, i == mine)
+            previous = i
+
+        html(f'<table class="tbl"><thead><tr><th>#</th><th>Vehicle</th>'
+             f'<th>Like-for-like</th><th>As tested</th><th>Tests</th></tr>'
+             f'</thead><tbody>{body}</tbody></table>'
+             f'<div style="font-size:11.5px;color:var(--faint);margin-top:10px">'
+             f'Ranked on the like-for-like figure: each model reweighted onto '
+             f'the mileage spread of every car its age, because a plain sort '
+             f'of the as-tested column puts a barely-driven supercar on top. '
+             f'Models without cars across enough of that range are left out '
+             f'rather than guessed at. As-tested and the test count cover '
+             f'every test in the band; the like-for-like figure covers the '
+             f'ones with an odometer reading. None of this separates how a car '
+             f'was built from how it was looked after, and the expensive '
+             f'marques are looked after.</div>')
+
+
 def panel_insights() -> None:
     with st.container(border=True):
         html(c.card_header("Key insights", "bulb", p["warn"]))
@@ -563,6 +651,8 @@ elif page == "Reliability":
         panel_insights()
     st.write("")
     panel_agecurve()
+    st.write("")
+    panel_reliability_ranking()
 
 elif page == "Failure reasons":
     l, r = st.columns([3, 2])
