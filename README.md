@@ -256,14 +256,33 @@ into `data/raw/`: the 2025 results and failure-item extracts, plus `lookup.zip`
 ./.venv/bin/python -m motintel.run_pipeline   # ingest + transform + quality report
 ./.venv/bin/python -m motintel.model          # baseline vs logistic vs XGBoost
 ./.venv/bin/python -m motintel.export         # 1.8 MB serving layer
+./.venv/bin/python -m motintel.enrich         # LLM pass over the defect wording
 ./.venv/bin/streamlit run motintel_app.py
 ```
+
+`enrich` is the one stage that calls a model, and it runs offline, once. The
+MOT extracts describe a failure as a category plus a sentence fragment —
+`Lamps, reflectors and electrical equipment` / `not working` — and there are
+510 such pairs behind everything the app can show. It turns each into plain
+English, a repair area a buyer thinks in, a three-level estimate of how big the
+job is, and a check to make when viewing the car. The result ships as Parquet,
+so the reader pays no latency and no tokens, and the labels can be read before
+they are shipped.
+
+Batch size is set by the quota rather than by latency. The free tier allows
+**20 `generate_content` requests per day** on this model, measured rather than
+assumed: a run at 25 pairs per batch needs 21 requests and died on the
+twenty-first, and waiting two minutes did not clear it. At 50 per batch the job
+is 11 requests. Each batch is cached on disk before the next is asked for, so a
+run interrupted by the allowance resumes where it stopped rather than starting
+again.
 
 ### Tests
 
 ```bash
 ./.venv/bin/python -m tests.test_app_smoke        # drives the real app
 ./.venv/bin/python -m tests.test_llm_grounding    # prompt + grounding checks
+./.venv/bin/python -m tests.test_enrich           # the enrichment stage, offline
 ```
 
 `test_app_smoke` runs the app itself through Streamlit's `AppTest` over 158
@@ -271,6 +290,10 @@ vehicles and every age band each one offers, weighted towards the shapes that
 have broken before. `test_llm_grounding` checks the sparse-data refusal and
 that every number in a summary appears in the data block it was given; its live
 half skips itself without `GEMINI_API_KEY`, so it stays green in CI.
+`test_enrich` covers the machinery around the enrichment call — which pairs go
+in, what invalidates the cache, which replies are rejected, which failures are
+worth retrying — without making a request, because at 20 a day a test suite
+that called the model would cost most of a run.
 
 The LLM layer needs `GEMINI_API_KEY` in `.env` (get one free at
 [aistudio.google.com](https://aistudio.google.com/apikey)). Without it the app

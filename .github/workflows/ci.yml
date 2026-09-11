@@ -43,6 +43,12 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: python -m tests.test_llm_grounding
 
+      - name: Enrichment stage (no API calls)
+        # Deliberately makes no request: the free tier allows 20 a day, so a
+        # suite that called the model would cost most of a labelling run. The
+        # checks that read the exported Parquet skip themselves without it.
+        run: python -m tests.test_enrich
+
       - name: App smoke test
         # The exported Parquet is gitignored, so this only runs where the data
         # has been produced. Skipping loudly beats a green tick that tested
