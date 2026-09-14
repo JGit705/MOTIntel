@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 
 from motintel.config import CAR_TEST_CLASS
 
-# Three-year bands, matching src/export.py exactly. They used to differ, which
+# Three-year bands, matching motintel/export.py exactly. They used to differ, which
 # meant the same vehicle produced one failure rate here and a different one in
 # the app — the sort of quiet disagreement that destroys trust in a number.
 AGE_BANDS = [(lo, lo + 3) for lo in range(0, 30, 3)]

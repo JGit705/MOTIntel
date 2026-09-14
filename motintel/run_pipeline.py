@@ -1,6 +1,6 @@
 """FR1.7 — the whole offline pipeline, end to end, in one command.
 
-    python src/run_pipeline.py
+    python -m motintel.run_pipeline
 
 Re-runnable: unpacking skips files already on disk, and every table is dropped
 and rebuilt, so a second run produces the same database as the first.

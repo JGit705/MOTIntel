@@ -10,8 +10,9 @@ and each destroys the credibility of the whole feature:
      llm.problems() is for, so its checks are tested here with answers built to
      fail them.
 
-Checks that need the API are skipped without GEMINI_API_KEY, so the suite still
-runs in CI and on a machine with no credentials. The offline checks always run.
+Checks that need the API are skipped without GEMINI_API_KEY, and checks that
+need the exported serving data are skipped without it, so the suite still runs
+in CI, where neither exists. The prompt checks always run.
 """
 from __future__ import annotations
 
@@ -22,11 +23,12 @@ from dataclasses import replace
 from dotenv import load_dotenv
 
 from motintel import grounding, llm, serving
-from motintel.config import ROOT
+from motintel.config import PROCESSED, ROOT
 
 load_dotenv(ROOT / ".env")
 
 WELL_COVERED = ("FORD", "FIESTA", 6)
+HAVE_DATA = (PROCESSED / "age_curve.parquet").exists()
 
 
 def _insight(**changes) -> dict:
@@ -56,6 +58,12 @@ def offline_checks() -> list[str]:
     for phrase in ("only", "not enough", "do not add", "this model"):
         if phrase not in system:
             fails.append(f"system prompt no longer says {phrase!r}")
+
+    # Everything below reads a real profile, and the serving data is gitignored.
+    if not HAVE_DATA:
+        print("  skipped the retrieval and answer checks: no serving data in "
+              "this checkout")
+        return fails
 
     profile = serving.build_profile(*WELL_COVERED)
     block = llm.render_data_block(profile)
@@ -159,9 +167,12 @@ def run() -> int:
     for f in fails:
         print(f"  FAIL: {f}")
     if not fails:
-        print("  prompt, retrieval, cache key and answer checks all intact")
+        print("  prompt, retrieval, cache key and answer checks all intact"
+              if HAVE_DATA else "  prompt checks intact")
 
-    if os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"):
+    if not HAVE_DATA:
+        print("\nlive grounding checks skipped — no serving data")
+    elif os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"):
         print("\nlive grounding checks")
         live = live_checks()
         for f in live:
