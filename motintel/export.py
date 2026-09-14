@@ -23,9 +23,81 @@ from motintel.config import CAR_TEST_CLASS, DB_PATH, PROCESSED
 MIN_CELL = 30
 
 
-def export() -> None:
+def export_top_defects(con) -> None:
+    """The ten commonest failure reasons per make / model / age band.
+
+    Carries how many of each reason's tests had it graded Dangerous. DVSA
+    grades each defect line, not each description — the same wording can be
+    Major on one car and Dangerous on another — so a reason's severity is a
+    share, not a label. Without it the table could say how often a tyre was
+    cut but not how often the cut made the car unsafe to drive, and its only
+    other column, the size of the repair, reads as a severity it is not.
+    """
+    print("exporting top defect categories per make / model / age band")
+    con.execute(f"""
+        COPY (
+            WITH scoped AS (
+                SELECT test_id, make, model,
+                       CAST(floor(vehicle_age_years / 3) * 3 AS INT) AS age_band
+                FROM analytical_tests
+                WHERE test_class_id = '{CAR_TEST_CLASS}'
+                  AND make IS NOT NULL AND model IS NOT NULL
+            ),
+            totals AS (
+                SELECT make, model, age_band, count(*) AS group_tests
+                FROM scoped GROUP BY 1, 2, 3
+                HAVING count(*) >= {MIN_CELL}
+            ),
+            counted AS (
+                SELECT s.make, s.model, s.age_band,
+                       -- 0.34% of defect codes are absent from the lookup
+                       -- tables. The analytical table keeps them NULL, which
+                       -- is the honest record; labelling happens here, at the
+                       -- presentation boundary, so the app never renders
+                       -- "None is the most common problem".
+                       coalesce(d.defect_category, 'Unclassified')
+                           AS defect_category,
+                       coalesce(d.defect_desc,
+                                'defect code not present in the DVSA lookup '
+                                || 'tables') AS defect_desc,
+                       count(DISTINCT s.test_id) AS n_tests,
+                       count(DISTINCT CASE WHEN d.deficiency_category
+                                               = 'Dangerous'
+                                           THEN s.test_id END) AS n_dangerous
+                FROM scoped s
+                JOIN analytical_defects d USING (test_id)
+                WHERE d.rfr_type_code IN ('F', 'P')
+                GROUP BY 1, 2, 3, 4, 5
+            ),
+            ranked AS (
+                -- Ties broken by name. Ordered on the count alone, which of
+                -- two reasons tied for tenth place made the cut was up to the
+                -- engine, and two runs of this query swapped 10,120 rows —
+                -- each one a defect the enrichment might not have labelled.
+                SELECT *, row_number() OVER (
+                           PARTITION BY make, model, age_band
+                           ORDER BY n_tests DESC, defect_category,
+                                    defect_desc) AS rk
+                FROM counted
+            )
+            SELECT r.make, r.model, r.age_band, r.defect_category, r.defect_desc,
+                   r.n_tests, r.n_dangerous, t.group_tests,
+                   r.n_tests * 1.0 / t.group_tests AS share_of_tests
+            FROM ranked r JOIN totals t USING (make, model, age_band)
+            WHERE r.rk <= 10
+        ) TO '{PROCESSED / "top_defects.parquet"}' (FORMAT parquet, COMPRESSION zstd)
+    """)
+
+
+def export(only: str | None = None) -> None:
+    """Every serving table — or, with `only="top_defects"`, just that one, so
+    adding a column to it does not mean rescanning for the other five."""
     PROCESSED.mkdir(parents=True, exist_ok=True)
     con = duckdb.connect(str(DB_PATH), read_only=True)
+    if only == "top_defects":
+        export_top_defects(con)
+        con.close()
+        return
 
     print("exporting failure rates by make / model / age band / mileage band")
     con.execute(f"""
@@ -50,49 +122,7 @@ def export() -> None:
         ) TO '{PROCESSED / "failure_rates.parquet"}' (FORMAT parquet, COMPRESSION zstd)
     """)
 
-    print("exporting top defect categories per make / model / age band")
-    con.execute(f"""
-        COPY (
-            WITH scoped AS (
-                SELECT test_id, make, model,
-                       CAST(floor(vehicle_age_years / 3) * 3 AS INT) AS age_band
-                FROM analytical_tests
-                WHERE test_class_id = '{CAR_TEST_CLASS}'
-                  AND make IS NOT NULL AND model IS NOT NULL
-            ),
-            totals AS (
-                SELECT make, model, age_band, count(*) AS group_tests
-                FROM scoped GROUP BY 1, 2, 3
-                HAVING count(*) >= {MIN_CELL}
-            ),
-            ranked AS (
-                SELECT s.make, s.model, s.age_band,
-                       -- 0.34% of defect codes are absent from the lookup
-                       -- tables. The analytical table keeps them NULL, which
-                       -- is the honest record; labelling happens here, at the
-                       -- presentation boundary, so the app never renders
-                       -- "None is the most common problem".
-                       coalesce(d.defect_category, 'Unclassified')
-                           AS defect_category,
-                       coalesce(d.defect_desc,
-                                'defect code not present in the DVSA lookup '
-                                || 'tables') AS defect_desc,
-                       count(DISTINCT s.test_id) AS n_tests,
-                       row_number() OVER (
-                           PARTITION BY s.make, s.model, s.age_band
-                           ORDER BY count(DISTINCT s.test_id) DESC) AS rk
-                FROM scoped s
-                JOIN analytical_defects d USING (test_id)
-                WHERE d.rfr_type_code IN ('F', 'P')
-                GROUP BY 1, 2, 3, 4, 5
-            )
-            SELECT r.make, r.model, r.age_band, r.defect_category, r.defect_desc,
-                   r.n_tests, t.group_tests,
-                   r.n_tests * 1.0 / t.group_tests AS share_of_tests
-            FROM ranked r JOIN totals t USING (make, model, age_band)
-            WHERE r.rk <= 10
-        ) TO '{PROCESSED / "top_defects.parquet"}' (FORMAT parquet, COMPRESSION zstd)
-    """)
+    export_top_defects(con)
 
     # Age curve per model. Built without the mileage split so it keeps rows
     # where no odometer reading was taken, which the failure_rates grain drops.
@@ -202,4 +232,5 @@ def export() -> None:
 
 
 if __name__ == "__main__":
-    export()
+    import sys
+    export(sys.argv[1] if len(sys.argv) > 1 else None)

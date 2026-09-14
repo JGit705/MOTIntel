@@ -443,18 +443,45 @@ def enrich(pairs: list[Pair] | None = None,
     return pl.DataFrame(out)
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
+    argv = sys.argv[1:] if argv is None else argv
     pairs = defect_pairs()
-    todo = [start for start in range(0, len(pairs), BATCH_SIZE)
-            if not (CACHE_DIR / f"{_cache_key(pairs[start:start + BATCH_SIZE])}"
+
+    # --missing-only: keep every shipped label whose defect is still in the
+    # source, drop the ones that have left it, and ask only for the new ones.
+    #
+    # The cache is per batch, and batches are cut from the whole list in order
+    # of frequency, so one defect entering or leaving the top ten shifts every
+    # batch after it and re-prices the lot. Making the export's tie-break
+    # deterministic did exactly that: 24 descriptions in, 32 out, and a full
+    # run would have been eleven requests to re-label 483 defects that already
+    # had reviewed labels. These go through the same overrides and the same
+    # validation as a full run, against the full source.
+    kept = None
+    todo_pairs = pairs
+    if "--missing-only" in argv and OUTPUT.exists():
+        source = pl.DataFrame({"defect_category": [p.category for p in pairs],
+                               "defect_desc": [p.description for p in pairs],
+                               "n_tests": [p.n_tests for p in pairs]})
+        kept = (pl.read_parquet(OUTPUT).drop("n_tests")
+                .join(source, on=["defect_category", "defect_desc"]))
+        labelled = set(zip(kept["defect_category"], kept["defect_desc"]))
+        todo_pairs = [p for p in pairs
+                      if (p.category, p.description) not in labelled]
+        print(f"keeping {kept.height} existing labels; "
+              f"{len(todo_pairs)} defect descriptions still to label")
+
+    todo = [start for start in range(0, len(todo_pairs), BATCH_SIZE)
+            if not (CACHE_DIR
+                    / f"{_cache_key(todo_pairs[start:start + BATCH_SIZE])}"
                     ".json").exists()]
     budget = Budget(REQUEST_BUDGET)
-    print(f"labelling {len(pairs)} defect descriptions in batches of "
+    print(f"labelling {len(todo_pairs)} defect descriptions in batches of "
           f"{BATCH_SIZE}")
-    print(f"{batches_needed(pairs) - len(todo)} of {batches_needed(pairs)} "
-          f"batches already cached; {len(todo)} to fetch, "
-          f"budget {budget.remaining}")
+    print(f"{batches_needed(todo_pairs) - len(todo)} of "
+          f"{batches_needed(todo_pairs)} batches already cached; {len(todo)} "
+          f"to fetch, budget {budget.remaining}")
     if len(todo) > budget.remaining:
         # Better to say so now than to label most of them and stop.
         print(f"\nnot enough budget to finish: {len(todo)} batches needed, "
@@ -463,7 +490,10 @@ def main() -> int:
               f"free tier's daily reset — cached batches are kept.")
         return 1
     try:
-        table = enrich(pairs, budget)
+        table = enrich(todo_pairs, budget) if todo_pairs else None
+        if kept is not None:
+            table = (kept if table is None
+                     else pl.concat([kept.select(table.columns), table]))
     except EnrichmentError as e:
         done = len(list(CACHE_DIR.glob("*.json"))) if CACHE_DIR.exists() else 0
         if isinstance(e, Truncated):
