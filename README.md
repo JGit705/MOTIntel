@@ -58,11 +58,11 @@ turns it into a number, over every summary the layer has already produced:
 
 | | |
 |---|---|
-| Figures checked against the data block they came from | **82** across 10 summaries |
+| Figures checked against the data block they came from | **110** across 13 summaries |
 | Summaries carrying a figure that is not in that block | **0** |
 | Summaries volunteering a price, recall, body type or buying advice | **0** |
-| Vehicles too thin to describe that were declined | **3 / 3** |
-| Well-covered vehicles answered rather than declined | **6 / 6** |
+| Vehicles too thin to describe that were declined | **4 / 4** |
+| Well-covered vehicles answered rather than declined | **7 / 7** |
 
 That last row is why the others mean anything. A model that declines everything
 scores perfectly on grounding and is useless, so refusing where the data is
@@ -87,6 +87,15 @@ both are worth keeping in view:
 What survived was real: two cached summaries stop mid-sentence, written before
 `finish_reason` was checked. `llm.py` no longer serves a truncated answer from
 cache, so they regenerate when next asked for.
+
+Both fixes landed in `motintel/grounding.py`, but `tests/test_llm_grounding.py`
+kept its own copy of the older logic and went on failing correct answers: it
+read `160,000 miles` as invented from a block whose axis is labelled `160k+`,
+and did not recognise *"there is not enough MOT data … only 30 tests"* as a
+refusal. It now imports the same definition the evaluation uses, which is the
+point of having the module. Its live failures were also being counted without
+being printed, so the suite could exit non-zero with nothing on screen saying
+why.
 
 ### Quota discipline
 
@@ -217,6 +226,14 @@ evaluation only, not served
 | **SQL retrieval, not vector search** | The data is structured and the filter is exact — make, model, age band. Embedding a defect-code table to run fuzzy similarity over it would be worse engineering than a `WHERE` clause. RAG is about grounding, not vectors. |
 | **Grounding kept provider-agnostic** | The guarantee lives in the retrieval and the prompt, not the vendor. The LLM is handed a rendered data block and no tools, so it has no route to any fact outside it — true whichever model serves the request. |
 | **Baseline before ML** | The group-by is the benchmark. It came within 0.017 AUC of XGBoost and beat it on calibration — which is the finding, and would have been invisible without computing it first. It is also why the app serves the observed rate rather than a model. |
+| **One page, disclosed progressively** | The app was five sections behind a nav, and seven of nineteen panel slots were the same panel again — so finding anything meant first recalling which section it was on, while the control that picks the car scrolled away from the answer it governs. It is now one page: the verdict, the grounded summary and the commonest failures on arrival, the other eight panels collapsed beneath with each title carrying its own one-line answer, and the selector in the rail where it stays put — bound to the URL, so a car can be bookmarked or shared. A ninth section, *Key insights*, was dropped: every line of it was already on the page above it. Streamlit runs a collapsed expander's body anyway, so every panel renders on every load — which cost 0.38 s for the whole page and made the smoke test strictly better, since each vehicle now exercises all twelve panels instead of the fifth it was dealt. |
+| **A search bar, not make then model** | 5,998 cars sit under 122 makes and Mercedes-Benz alone has 425 entries once trims are counted, so two dropdowns meant knowing which make to open before there was anywhere to type. One search bar at the top of the page offers only the cars in the data, most-tested first, jumps to the one picked and clears for the next search. It sits in a toolbar with the age and comparison controls, sticky on a wide screen; it used to be a sidebar, and a sidebar collapsed behind a button did not read as search. The car, age and comparison live in the URL (`?make=TOYOTA&model=YARIS&age=6&vs=FORD\|FIESTA`), synced by hand because Streamlit's binding would write the display name into the link. |
+| **Compare up to four cars, only at the same age** | Up to three other cars sit beside this one, a column and a chart line each, in colours that say nothing about better or worse, ordered by failure rate in the lead sentence. Always at the page car's age, never across ages: a four-year-old car against a twelve-year-old one mostly measures the eight years. A car never tested at that age is named with the ages it was, rather than compared across them. |
+| **A page of questions, not a report** | The page was data, charts, a warning, a summary and eight closed sections of more data. It is now organised around what a buyer asks, in order — *Is it reliable? What usually goes wrong? Does age or mileage matter? How does it compare? What should I do?* — with a sticky summary bar and jump links, a four-figure snapshot and a scale that marks the model against its age average, what looks good beside what needs attention, and a vehicle-specific checklist that can be ticked and saved. Two expanders remain: the full ranking, and data & methodology. |
+| **Findings in code, interpretation by AI** | Four layers kept apart: raw MOT data, calculated statistics, derived findings (`serving.findings` — better or worse than average, sample size from the 95% margin, the dominant part of the car, the mileage threshold, where age helps or hurts), and AI interpretation. The model never produces a number the page shows. It returns structured JSON — headline, "should I be concerned?", key takeaways, what to check — which the page lays out, and `llm.problems()` rejects any answer carrying a figure absent from its data, a claim outside it, or a refusal in the wrong place before it is cached or shown. |
+| **Severity per failure reason** | Frequency, severity and repair size are three questions, and a "small job" badge beside a Dangerous fault reads as reassurance. DVSA grades each defect line, so the export now counts, per reason, the tests where it was graded Dangerous. In practice DVSA grades a description consistently — a tyre with cords exposed is Dangerous every time, a light not working never is. |
+| **A deterministic top ten** | Ordered on the count alone, which of two reasons tied for tenth place made the cut was up to the engine: two runs of the export swapped 10,120 rows. Ties now break by name. The enrichment gained `--missing-only`, which keeps every reviewed label still in the source and asks only for new descriptions, so a change to the export no longer re-prices five hundred labels. |
+| **Names by rule, not by model** | `str.title()` printed `Mx-5`, `Bmw` and `Cr-V`. The backlog had this down as a job for the enrichment stage, but the casing follows a few conventions — a part with a digit is a code, a part with no vowel is an initialism, BMW and Hyundai lower-case a letter — plus two short exception tables. Deterministic, free, and checked in full, including that no two of the 5,998 cars share a display name. |
 | **One profile, shared** | `motintel/serving.py` builds the object the page renders and the object the LLM is given. Two builders with their own thresholds is how the same car ends up with one number on screen and a different one in its summary. |
 | **Split by date, not randomly** | A random split puts the same vehicle's January and November tests on opposite sides and leaks the answer. |
 
