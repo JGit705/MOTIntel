@@ -2,6 +2,8 @@
 
 **Should you buy that used car? 42.7 million real UK MOT tests from 2025, one page of answers.**
 
+**Project page: [jgit705.github.io/MOTIntel](https://jgit705.github.io/MOTIntel/)**
+
 Pick a make, model and age. MOTIntel shows how often that car failed its MOT in
 2025 compared with every car the same age, what goes wrong with it, whether
 mileage matters, how it stacks up against the cars you're weighing it against,
