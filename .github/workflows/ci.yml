@@ -55,6 +55,21 @@ jobs:
         # exported Parquet, which the anchors need something to match in.
         run: python -m tests.test_defect_labels
 
+      - name: Short labels (no API calls)
+        # The rules run on fixed cases; the shipped table is only checked
+        # where it has been produced.
+        run: python -m tests.test_short_labels
+
+      - name: Display names
+        # Checks every car in the serving data for a clash, so it needs the
+        # exported Parquet — skipped loudly without it, like the smoke test.
+        run: |
+          if [ -f data/processed/age_curve.parquet ]; then
+            python -m tests.test_names
+          else
+            echo "::notice::no serving data in the checkout — names test skipped"
+          fi
+
       - name: LLM evaluation
         # Spends no quota: it measures the summaries llm.py has already cached
         # and reports how much of the fixed comparison set that covered. With

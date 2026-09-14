@@ -1,5 +1,5 @@
-# Pinned to the versions this was built and tested against. Every module
-# imported by src/ or app/ appears here; plotly, numpy and scipy were
+# Minimum versions this was built and tested against. Every module imported
+# by motintel/ or motintel_app.py appears here; plotly, numpy and scipy were
 # previously missing, so a clean install could not run the app.
 duckdb>=1.5.5
 polars>=1.44.2

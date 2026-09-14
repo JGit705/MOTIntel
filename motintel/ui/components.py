@@ -64,6 +64,19 @@ def signed_pts(delta: float) -> str:
     return f"{sign}{abs(pts):.1f} pp"
 
 
+def sentence_case(text: str) -> str:
+    return text[:1].upper() + text[1:]
+
+
+def bands_text(band_list: list[str]) -> str:
+    """"0-3", "3-6" as a reader would say them: "0–3 and 3–6"."""
+    shown = [b.replace("-", "–") for b in band_list]
+    if len(shown) > 3:
+        return f"{len(shown)} ages from {shown[0]}"
+    return (" and ".join([", ".join(shown[:-1]), shown[-1]]) if len(shown) > 1
+            else shown[0])
+
+
 def card_header(title: str, pill: str = "", action: str = "") -> str:
     """Header row only. The card itself is a real Streamlit container — markup
     opened with st.markdown cannot wrap a chart, because Streamlit renders each

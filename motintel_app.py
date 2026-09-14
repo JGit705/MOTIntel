@@ -25,6 +25,7 @@ from dotenv import load_dotenv
 from motintel import llm, serving
 from motintel.config import PROCESSED
 from motintel.queries import MIN_TESTS_FOR_CONFIDENCE
+from motintel.ui import charts
 from motintel.ui import components as c
 from motintel.ui import names
 from motintel.ui import theme as th
@@ -38,22 +39,6 @@ load_dotenv(ROOT / ".env")
 
 
 st.set_page_config(page_title="MOTIntel", page_icon="🚗", layout="wide")
-
-
-def style_fig(fig: go.Figure, p: dict, height: int) -> go.Figure:
-    fig.update_layout(
-        template=p["plotly"], height=height,
-        margin=dict(l=6, r=6, t=6, b=6),
-        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        # The page's own face. Plotly otherwise sets its axes in Open Sans, a
-        # second sans a few pixels different from every label around it.
-        font=dict(color=p["text"], size=12,
-                  family='"Source Sans", "Source Sans Pro", sans-serif'),
-        showlegend=False,
-        hoverlabel=dict(font_size=12))
-    fig.update_xaxes(gridcolor=p["grid"], zeroline=False)
-    fig.update_yaxes(gridcolor=p["grid"], zeroline=False)
-    return fig
 
 
 def html(markup: str) -> None:
@@ -353,19 +338,6 @@ if age_change and age_change[1]["band"] != age_band:
     age_change = None
 
 
-def sentence_case(text: str) -> str:
-    return text[:1].upper() + text[1:]
-
-
-def bands_text(band_list: list[str]) -> str:
-    """"0-3", "3-6" as a reader would say them: "0–3 and 3–6"."""
-    shown = [b.replace("-", "–") for b in band_list]
-    if len(shown) > 3:
-        return f"{len(shown)} ages from {shown[0]}"
-    return (" and ".join([", ".join(shown[:-1]), shown[-1]]) if len(shown) > 1
-            else shown[0])
-
-
 def severity_badge(share: float | None) -> str:
     """How often DVSA graded this reason Dangerous. A share, not a label: the
     grade belongs to each defect line, not to the wording."""
@@ -472,12 +444,12 @@ def takeaways() -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
         good.append(("Better than average at some ages" if f.get("age_worse")
                      else "Better than average at every age",
                      f"Below the all-cars failure rate at "
-                     f"{bands_text(f['age_better'])} years."))
+                     f"{c.bands_text(f['age_better'])} years."))
     if f.get("age_worse"):
         watch.append(("Worse than average at other ages" if f.get("age_better")
                       else "Worse than average at every age",
                       f"Above the all-cars failure rate at "
-                      f"{bands_text(f['age_worse'])} years."))
+                      f"{c.bands_text(f['age_worse'])} years."))
     if f.get("sample") == "large":
         good.append(("Large supporting sample",
                      f"{n_tests:,} tests: the rate is accurate to within "
@@ -497,7 +469,7 @@ def takeaways() -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
                       f"{better_than}% of models this age."))
     if f.get("dominant_area") and f["dominant_area"][1] >= 0.3:
         area, share = f["dominant_area"]
-        watch.append((sentence_case(area),
+        watch.append((c.sentence_case(area),
                       f"{share:.0%} of the ten commonest failure reasons."))
     if step:
         watch.append(("Mileage matters",
@@ -597,14 +569,14 @@ def panel_failures() -> None:
         chosen = st.pills(
             "Show one part of the car", options, key="area",
             selection_mode="single",
-            format_func=lambda a: f"{sentence_case(a)} · {share_of[a]:.0%}")
+            format_func=lambda a: f"{c.sentence_case(a)} · {share_of[a]:.0%}")
 
     rows = [(i, d) for i, d in enumerate(top, 1)]
     if chosen:
         rows = [(i, d) for i, d in rows if d.get("repair_area") == chosen]
     elif not st.session_state.get("all_reasons"):
         rows = rows[:3]
-    action = (f"{sentence_case(chosen)} only" if chosen
+    action = (f"{c.sentence_case(chosen)} only" if chosen
               else f"Top {len(rows)} of {len(top)}" if len(rows) < len(top)
               else f"All {len(top)}")
     with shell("Top failure reasons", action=action if top else ""):
@@ -638,7 +610,7 @@ def panel_failures() -> None:
             facts = [("DVSA record", escape(dvsa))]
             if d.get("repair_area"):
                 facts.append(("Part of the car",
-                              escape(sentence_case(d["repair_area"]))))
+                              escape(c.sentence_case(d["repair_area"]))))
             if d.get("effort"):
                 facts.append(("Typical repair",
                               f'{JOB_SIZE[d["effort"]]} — how big the repair '
@@ -676,7 +648,7 @@ def panel_failures() -> None:
                     fill = p["accent"] if area == (chosen or area_shares[0][0]) \
                         else p["bar_peer"]
                     body += (f'<tr><td class="nm">'
-                             f'{escape(sentence_case(area))}</td>'
+                             f'{escape(c.sentence_case(area))}</td>'
                              f'<td class="num">{share:.0%}</td>'
                              f'<td style="width:52%">'
                              f'{c.bar(share / biggest, fill)}</td></tr>')
@@ -772,7 +744,7 @@ def age_curve_fig(extra: list[tuple[str, str, str]] | None = None) -> go.Figure:
                      range=[0, highest + 3],
                      title=dict(text="Age at test (years)",
                                 font=dict(size=12, color=p["muted"])))
-    fig = style_fig(fig, p, 300)
+    fig = charts.style_fig(fig, p, 300)
     fig.update_layout(showlegend=True,
                       legend=dict(orientation="h", y=1.14, x=0,
                                   bgcolor="rgba(0,0,0,0)"))
@@ -795,7 +767,7 @@ def mileage_fig() -> go.Figure:
     fig.update_yaxes(tickformat=".0%", nticks=6)
     fig.update_xaxes(title=dict(text="Mileage at test",
                                 font=dict(size=12, color=p["muted"])))
-    return style_fig(fig, p, 300)
+    return charts.style_fig(fig, p, 300)
 
 
 def panel_age_mileage() -> None:
@@ -815,8 +787,8 @@ def panel_age_mileage() -> None:
             better, worse = f.get("age_better", []), f.get("age_worse", [])
             if better and worse:
                 said = (f"Below the all-cars failure rate at "
-                        f"{bands_text(better)} years, and above it at "
-                        f"{bands_text(worse)} years.")
+                        f"{c.bands_text(better)} years, and above it at "
+                        f"{c.bands_text(worse)} years.")
             elif better:
                 said = ("Below the all-cars failure rate at every age with "
                         "enough tests to say so.")
@@ -1115,7 +1087,7 @@ def checklist_groups() -> list[tuple[str, str, list[str]]]:
             continue
         priority = ("High priority" if area == area_shares[0][0]
                     else "Medium priority" if share_of[area] >= 0.2 else "")
-        groups.append((sentence_case(area), priority, checks))
+        groups.append((c.sentence_case(area), priority, checks))
     if step:
         groups.append(("Mileage", "High priority" if step["step"] >= 0.05
                        else "", [f"Check the recorded mileage: observed "
