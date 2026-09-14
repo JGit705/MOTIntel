@@ -1,0 +1,448 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MOTIntel</title>
+<meta name="description" content="Should you buy that used car? 42.7 million real UK MOT tests from 2025, one page of answers.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232563eb'/%3E%3Cpath d='M9 19v-3l2-4h10l2 4v3M9 19h14M11 22v-3M21 22v-3' stroke='white' stroke-width='2' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<style>
+  /* The app's own light palette (motintel/ui/theme.py), so the page and the
+     screenshots on it read as one product. */
+  :root {
+    --bg:#f2f5fa; --panel:#ffffff; --panel2:#f5f8fd;
+    --border:#e0e7f1; --border-soft:#eaeff7;
+    --text:#0e1a2c; --muted:#4a5a73; --faint:#5b6f8a;
+    --accent:#2563eb; --accent2:#1d4ed8; --accent-soft:rgba(37,99,235,.09);
+    --good:#147c3b; --good-soft:rgba(21,128,61,.10);
+    --bad:#b91c1c; --bad-soft:rgba(185,28,28,.10);
+    --track:#e6ecf6;
+    --shadow:0 14px 32px -26px rgba(15,30,60,.5);
+    --radius:14px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg:#0a1120; --panel:#111c31; --panel2:#16223a;
+      --border:#1e2d49; --border-soft:#182742;
+      --text:#e8eefb; --muted:#8598ba; --faint:#7586a7;
+      --accent:#3b82f6; --accent2:#60a5fa; --accent-soft:rgba(59,130,246,.14);
+      --good:#22c55e; --good-soft:rgba(34,197,94,.13);
+      --bad:#f15b5b; --bad-soft:rgba(239,68,68,.13);
+      --track:#1b2a45;
+      --shadow:0 18px 40px -28px rgba(0,0,0,.9);
+    }
+  }
+
+  *, *::before, *::after { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    padding-inline: 20px;
+  }
+  img { max-width: 100%; height: auto; display: block; }
+  a { color: var(--accent2); text-underline-offset: 3px; }
+  a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+  code { font: .88em ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+         background: var(--accent-soft); color: var(--accent2);
+         padding: 2px 6px; border-radius: 6px; }
+  .wrap { max-width: 1040px; margin: 0 auto; }
+  .num { font-variant-numeric: tabular-nums; }
+
+  /* ---------- header ---------- */
+  header.top { display: flex; align-items: center; justify-content: space-between;
+               gap: 12px; padding-block: 22px; }
+  .brand { display: flex; align-items: center; gap: 12px; text-decoration: none; color: var(--text); }
+  .brand .mark { width: 36px; height: 36px; border-radius: 10px; background: var(--accent);
+                 display: grid; place-items: center; flex: none; }
+  .brand .name { font-size: 20px; font-weight: 700; letter-spacing: -.02em; line-height: 1.1; }
+  .brand .tag { font-size: 12px; color: var(--muted); }
+  .top-link { font-size: 14px; font-weight: 600; color: var(--muted); text-decoration: none;
+              padding: 6px 10px; border-radius: 8px; }
+  .top-link:hover { background: var(--panel); color: var(--text); }
+
+  /* ---------- hero ---------- */
+  .hero { padding-block: 36px 28px; }
+  .hero h1 { font-size: clamp(34px, 6vw, 56px); line-height: 1.05; letter-spacing: -.035em;
+             margin: 0; max-width: 22ch; text-wrap: balance; }
+  .hero h1 span { color: var(--muted); font-weight: 400; }
+  .hero .lead { font-size: 19px; line-height: 1.55; color: var(--muted);
+                margin: 20px 0 0; max-width: 62ch; }
+  .hero .lead b { color: var(--text); font-weight: 600; }
+  .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 28px; }
+  .btn { display: inline-flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 600;
+         text-decoration: none; padding: 10px 16px; border-radius: 10px;
+         border: 1px solid var(--border); background: var(--panel); color: var(--text); }
+  .btn:hover { background: var(--panel2); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.primary:hover { filter: brightness(1.08); background: var(--accent); }
+  .data-note { margin-top: 28px; font-size: 14px; color: var(--muted); line-height: 1.55;
+               border-left: 3px solid var(--accent); padding: 2px 0 2px 14px; max-width: 70ch; }
+  .data-note b { color: var(--text); }
+
+  /* ---------- screenshots ---------- */
+  figure.shot { margin: 0; }
+  figure.shot .frame { background: var(--panel); border: 1px solid var(--border);
+                       border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
+  figure.shot figcaption { font-size: 13px; color: var(--muted); margin-top: 10px; }
+
+  /* ---------- sections ---------- */
+  section { padding-block: 56px 8px; }
+  .eyebrow { font-size: 13px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+             color: var(--accent2); margin: 0 0 8px; }
+  h2 { font-size: clamp(26px, 4vw, 34px); line-height: 1.15; letter-spacing: -.025em;
+       margin: 0 0 12px; text-wrap: balance; }
+  .sub { color: var(--muted); margin: 0 0 28px; max-width: 68ch; }
+
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
+          box-shadow: var(--shadow); padding: 24px 28px; }
+  .card + .card { margin-top: 16px; }
+  .card h3 { font-size: 20px; line-height: 1.3; letter-spacing: -.015em; margin: 0 0 8px; }
+  .card h3 .n { color: var(--faint); font-weight: 600; margin-right: 6px; }
+  .card p { margin: 0 0 16px; max-width: 72ch; }
+  .card p:last-child { margin-bottom: 0; }
+  .card .small { font-size: 13px; color: var(--muted); }
+
+  /* Finding 1: the age curve as bars, the peak called out. */
+  .bars { list-style: none; margin: 20px 0 0; padding: 0; display: grid; gap: 10px; }
+  .bars li { display: grid; grid-template-columns: 96px minmax(0, 1fr) 64px; align-items: center; gap: 12px;
+             font-size: 14px; }
+  .bars .lbl { color: var(--muted); font-weight: 600; }
+  .bars .track { height: 14px; background: var(--track); border-radius: 99px; overflow: hidden; }
+  .bars .track i { display: block; height: 100%; border-radius: 99px; background: var(--accent); }
+  .bars .peak .track i { background: var(--bad); }
+  .bars .peak .lbl, .bars .peak .val { color: var(--bad); }
+  .bars .val { font-weight: 700; text-align: right; }
+  .bars .tests { grid-column: 2 / 4; font-size: 12px; color: var(--faint); margin-top: -8px; }
+
+  /* Finding 3: two figures side by side. */
+  .pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-top: 18px; }
+  .stat { border: 1px solid var(--border-soft); background: var(--panel2); border-radius: 12px; padding: 16px 18px; }
+  .stat .v { font-size: 40px; font-weight: 700; letter-spacing: -.03em; line-height: 1; }
+  .stat .k { font-size: 14px; color: var(--muted); margin-top: 8px; }
+  .stat.bad .v { color: var(--bad); }
+  .stat.good .v { color: var(--good); }
+
+  /* ---------- tables ---------- */
+  .tbl-wrap { width: 100%; overflow-x: auto; overscroll-behavior-x: contain; margin-top: 18px; }
+  table { width: 100%; border-collapse: collapse; min-width: 480px; font-size: 14px; }
+  th { text-align: left; font-size: 12px; font-weight: 600; color: var(--muted); background: var(--panel2);
+       padding: 8px 12px; white-space: nowrap; }
+  th:first-child { border-radius: 8px 0 0 8px; }
+  th:last-child { border-radius: 0 8px 8px 0; }
+  td { padding: 11px 12px; border-bottom: 1px solid var(--border-soft); }
+  tr:last-child td { border-bottom: 0; }
+  td.n { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  /* Two columns, a label and a figure: fits any width without scrolling. */
+  table.fit { min-width: 0; }
+  table.fit td.n { text-align: right; white-space: normal; width: 34%; }
+  td b, td.best { font-weight: 700; }
+  .badge { font-size: 12px; font-weight: 600; border-radius: 6px; padding: 2px 8px; margin-left: 6px;
+           white-space: nowrap; background: var(--good-soft); color: var(--good); }
+
+  /* ---------- pipeline ---------- */
+  .steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px;
+           grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); counter-reset: step; }
+  .steps li { background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+              padding: 18px 20px; counter-increment: step; position: relative; }
+  .steps li::before { content: counter(step); position: absolute; top: 18px; left: 20px;
+                      width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center;
+                      font-size: 13px; font-weight: 700; color: var(--accent2); background: var(--accent-soft); }
+  .steps h3 { font-size: 16px; margin: 0 0 6px 38px; line-height: 26px; }
+  .steps p { font-size: 14px; color: var(--muted); margin: 0 0 8px; line-height: 1.55; }
+  .steps .file { font-size: 13px; }
+
+  /* ---------- in numbers ---------- */
+  .figures { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; margin: 0; }
+  .figures div { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; }
+  .figures dd { margin: 0; font-size: 28px; font-weight: 700; letter-spacing: -.02em; line-height: 1.15; }
+  .figures dt { font-size: 14px; color: var(--muted); margin-top: 6px; }
+
+  /* ---------- checks ---------- */
+  .checks { list-style: none; margin: 16px 0 0; padding: 0; display: grid; gap: 10px; }
+  .checks li { display: flex; gap: 10px; align-items: flex-start; }
+  .checks svg { flex: none; margin-top: 4px; color: var(--good); }
+
+  /* ---------- run it ---------- */
+  pre { margin: 16px 0 0; background: var(--panel2); border: 1px solid var(--border-soft); border-radius: 10px;
+        padding: 14px 16px; overflow-x: auto; font: 13px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  pre code { background: none; padding: 0; color: var(--text); font-size: inherit; }
+
+  footer { margin-top: 64px; padding-block: 24px 40px; border-top: 1px solid var(--border);
+           font-size: 13px; color: var(--muted); line-height: 1.7; }
+  footer p { margin: 0 0 6px; max-width: 90ch; }
+
+  @media (max-width: 640px) {
+    body { font-size: 15px; padding-inline: 16px; }
+    .hero { padding-block: 16px 20px; }
+    .hero .lead { font-size: 17px; }
+    .card { padding: 18px; }
+    .bars li { grid-template-columns: 76px minmax(0, 1fr) 56px; gap: 10px; }
+    .brand .tag { display: none; }
+    section { padding-block: 44px 4px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <a class="brand" href="./" aria-label="MOTIntel home">
+      <span class="mark" aria-hidden="true">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 17v-4l2-5h10l2 5v4M5 17h14M7 20v-3M17 20v-3M5 13h14"/></svg>
+      </span>
+      <span>
+        <span class="name">MOTIntel</span><br>
+        <span class="tag">Real MOT data. Smarter decisions.</span>
+      </span>
+    </a>
+    <a class="top-link" href="https://github.com/JGit705/MOTIntel">View on GitHub</a>
+  </header>
+
+  <main>
+    <div class="hero">
+      <h1>Should you buy that used car? <span>42.7 million MOT tests have an opinion.</span></h1>
+      <p class="lead">
+        Pick a make, model and age. MOTIntel shows how often that car failed its MOT in 2025
+        <b>compared with every car the same age</b>, what goes wrong with it, whether mileage matters,
+        how it stacks up against the cars you're weighing it against, and what to look at when you go
+        and see one. An LLM interprets the findings, and <b>every answer is checked against the data</b>
+        before anyone sees it.
+      </p>
+      <div class="actions">
+        <a class="btn primary" href="https://github.com/JGit705/MOTIntel">
+          <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+          View the code
+        </a>
+        <a class="btn" href="#run">Run it yourself</a>
+        <a class="btn" href="#findings">Three findings</a>
+      </div>
+      <p class="data-note">
+        <b>About the data:</b> every figure comes from the DVSA's anonymised MOT results for tests
+        carried out between <b>1 January and 30 December 2025</b>. It is one year of tests, not a car's
+        full history. This page is a showcase: the app itself runs on your own machine.
+      </p>
+    </div>
+
+    <figure class="shot">
+      <div class="frame">
+        <img src="dashboard.png" width="1440" height="1052"
+             alt="MOTIntel showing a Ford Fiesta aged 9 to 12 years: a 36.5% failure rate against a 29.8% average for cars that age, marked worse than average, with what looks good and what needs attention.">
+      </div>
+      <figcaption>A Ford Fiesta's 2025 MOT record against every car its age.</figcaption>
+    </figure>
+
+    <!-- ================= findings ================= -->
+    <section id="findings">
+      <p class="eyebrow">What the data says</p>
+      <h2>Three findings from 2025</h2>
+      <p class="sub">Measured across every first MOT test in the year, after retests and aborted tests were removed.</p>
+
+      <article class="card">
+        <h3><span class="n">1</span>Old cars fail <em>less</em>, because the bad ones are gone.</h3>
+        <p>
+          The failure rate climbs from 11.0% at 0–3 years old to a peak of <b>42.7% at 18–21 years</b>,
+          then falls to 33.3% by 27–30. Old cars don't get better. The neglected ones were scrapped, so
+          the cars still taking an MOT at 25 are the looked-after minority. That is survivorship bias,
+          measured directly.
+        </p>
+        <ul class="bars" aria-label="Failure rate by vehicle age, selected age bands">
+          <li><span class="lbl">0–3 yrs</span><span class="track"><i style="width:22.02%"></i></span><span class="val num">11.01%</span><span class="tests num">1,475,242 tests</span></li>
+          <li><span class="lbl">6–9 yrs</span><span class="track"><i style="width:41.82%"></i></span><span class="val num">20.91%</span><span class="tests num">7,465,670 tests</span></li>
+          <li><span class="lbl">12–15 yrs</span><span class="track"><i style="width:75.06%"></i></span><span class="val num">37.53%</span><span class="tests num">4,874,900 tests</span></li>
+          <li class="peak"><span class="lbl">18–21 yrs</span><span class="track"><i style="width:85.44%"></i></span><span class="val num">42.72%</span><span class="tests num">1,858,569 tests · the peak</span></li>
+          <li><span class="lbl">27–30 yrs</span><span class="track"><i style="width:66.66%"></i></span><span class="val num">33.33%</span><span class="tests num">121,698 tests</span></li>
+        </ul>
+        <p class="small" style="margin-top:14px">Bars run from 0% to 50%.</p>
+      </article>
+
+      <article class="card">
+        <h3><span class="n">2</span>Machine learning barely beat a simple average, so the app doesn't use it.</h3>
+        <p>
+          Trained on January to September 2025 and tested on October to December 2025, XGBoost beat a
+          plain make/model/age average by <b>0.017 AUC</b>, and the average was <em>better calibrated</em>.
+          The page shows the observed rate, not a prediction.
+        </p>
+        <div class="tbl-wrap">
+          <table>
+            <thead><tr><th>Model</th><th>AUC</th><th>Brier</th><th>Calibration error</th></tr></thead>
+            <tbody>
+              <tr><td>Baseline (group-by make/model/age)</td><td class="n">0.6743</td><td class="n">0.1877</td><td class="n best">0.0058<span class="badge">Best</span></td></tr>
+              <tr><td>Logistic regression</td><td class="n">0.6813</td><td class="n">0.1872</td><td class="n">0.0173</td></tr>
+              <tr><td>XGBoost</td><td class="n best">0.6910</td><td class="n best">0.1846</td><td class="n">0.0069</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </article>
+
+      <article class="card">
+        <h3><span class="n">3</span>Mileage is brutal.</h3>
+        <p>The same car, split by how far it had been driven.</p>
+        <div class="pair">
+          <div class="stat good"><div class="v num">9.8%</div><div class="k">of Ford Fiesta tests failed under 20k miles</div></div>
+          <div class="stat bad"><div class="v num">51.3%</div><div class="k">of Ford Fiesta tests failed over 120k miles</div></div>
+        </div>
+      </article>
+    </section>
+
+    <!-- ================= compare ================= -->
+    <section id="compare">
+      <p class="eyebrow">Like for like</p>
+      <h2>Compare cars at the same age</h2>
+      <p class="sub">
+        Up to three more cars, always at the same age, because a 4-year-old car against a 12-year-old one
+        mostly measures the eight years between them. One search box covers all <b>5,998</b> cars, and the
+        view lives in the URL, so any comparison can be shared.
+      </p>
+      <figure class="shot">
+        <div class="frame">
+          <img src="compare.png" width="1440" height="1069" loading="lazy"
+               alt="Ford Fiesta compared with a Volkswagen Golf and a Vauxhall Corsa at 9 to 12 years: failure rates of 36.5%, 19.7% and 38.9%, a head-to-head table, and failure rate by age for each car.">
+        </div>
+        <figcaption>Ford Fiesta, Volkswagen Golf and Vauxhall Corsa, all at 9–12 years old.</figcaption>
+      </figure>
+    </section>
+
+    <!-- ================= pipeline ================= -->
+    <section id="how">
+      <p class="eyebrow">How it works</p>
+      <h2>From 8.5 GB of ZIPs to one page of answers</h2>
+      <p class="sub">The heavy work happens once, offline. The app only ever reads 1.9 MB of pre-calculated results.</p>
+      <ol class="steps">
+        <li>
+          <h3>Ingest</h3>
+          <p>42.7 million tests and 92.5 million defect records loaded into DuckDB as they are, in about 49 seconds.</p>
+          <a class="file" href="https://github.com/JGit705/MOTIntel/blob/main/motintel/ingest.py"><code>ingest.py</code></a>
+        </li>
+        <li>
+          <h3>Clean</h3>
+          <p>One row per test. Every filter is counted and reported, and the quirks that contradict DVSA's own guide are handled.</p>
+          <a class="file" href="https://github.com/JGit705/MOTIntel/blob/main/motintel/transform.py"><code>transform.py</code></a>
+        </li>
+        <li>
+          <h3>Model comparison</h3>
+          <p>A plain average against logistic regression and XGBoost, split by date so no car leaks across. Kept as evaluation only.</p>
+          <a class="file" href="https://github.com/JGit705/MOTIntel/blob/main/motintel/model.py"><code>model.py</code></a>
+        </li>
+        <li>
+          <h3>Export</h3>
+          <p>Everything the page can show, pre-calculated into 1.9 MB of Parquet. Groups under 30 tests are dropped.</p>
+          <a class="file" href="https://github.com/JGit705/MOTIntel/blob/main/motintel/export.py"><code>export.py</code></a>
+        </li>
+        <li>
+          <h3>LLM enrichment</h3>
+          <p>515 terse DVSA defect fragments turned into plain English, validated by rules and reviewed by a person.</p>
+          <a class="file" href="https://github.com/JGit705/MOTIntel/blob/main/motintel/enrich.py"><code>enrich.py</code></a>
+        </li>
+        <li>
+          <h3>Findings</h3>
+          <p>One profile per car, read by both the page and the AI, including a rank with mileage levelled out.</p>
+          <a class="file" href="https://github.com/JGit705/MOTIntel/blob/main/motintel/serving.py"><code>serving.py</code></a>
+        </li>
+        <li>
+          <h3>The page</h3>
+          <p>A Streamlit app laid out as a buyer's five questions, from "Is it reliable?" to "What should I check?"</p>
+          <a class="file" href="https://github.com/JGit705/MOTIntel/blob/main/motintel_app.py"><code>motintel_app.py</code></a>
+        </li>
+        <li>
+          <h3>AI interpretation</h3>
+          <p>Gemini sees only the car's figures, returns structured JSON, and is checked before anything is shown.</p>
+          <a class="file" href="https://github.com/JGit705/MOTIntel/blob/main/motintel/grounding.py"><code>grounding.py</code></a>
+        </li>
+      </ol>
+    </section>
+
+    <!-- ================= AI checks ================= -->
+    <section id="ai">
+      <p class="eyebrow">AI, checked</p>
+      <h2>Measured, not assumed</h2>
+      <p class="sub">An answer is rejected before it is saved or shown if it:</p>
+      <div class="card">
+        <ul class="checks">
+          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg><span>contains a figure that isn't in the data it was given;</span></li>
+          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg><span>mentions anything outside the data, such as a price, a recall or advice to buy or avoid;</span></li>
+          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg><span>describes a car with too few tests instead of declining;</span></li>
+          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg><span>declines a well-covered car, because a model that refused everything would otherwise pass.</span></li>
+        </ul>
+        <div class="tbl-wrap">
+          <table class="fit">
+            <tbody>
+              <tr><td>Figures checked against their source data</td><td class="n"><b>199</b> across 18 answers</td></tr>
+              <tr><td>Answers with a figure not in that data</td><td class="n"><b>0</b></td></tr>
+              <tr><td>Answers mentioning prices, recalls or buying advice</td><td class="n"><b>0</b></td></tr>
+              <tr><td>Well-covered cars answered rather than declined</td><td class="n"><b>10 / 10</b></td></tr>
+              <tr><td>Thin-data cars correctly declined</td><td class="n"><b>5 / 6</b></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="small" style="margin-top:14px">
+          The one miss is kept in the numbers: an answer for an Abarth 595C with only 90 tests said the data
+          was too thin, then described the car anyway.
+        </p>
+      </div>
+    </section>
+
+    <!-- ================= numbers ================= -->
+    <section id="numbers">
+      <p class="eyebrow">In numbers</p>
+      <h2>One year of MOTs</h2>
+      <dl class="figures">
+        <div><dd class="num">42,728,066</dd><dt>MOT tests loaded</dt></div>
+        <div><dd class="num">92,473,454</dd><dt>defect records loaded</dt></div>
+        <div><dd class="num">35,368,333</dd><dt>rows after cleaning (82.8% kept)</dt></div>
+        <div><dd class="num">5,998</dd><dt>cars you can look up, across 122 makes</dt></div>
+        <div><dd class="num">~49 s</dd><dt>to load and clean</dt></div>
+        <div><dd class="num">1.9 MB</dd><dt>serving layer of Parquet</dt></div>
+      </dl>
+    </section>
+
+    <!-- ================= run ================= -->
+    <section id="run">
+      <p class="eyebrow">Run it yourself</p>
+      <h2>The app runs on your machine</h2>
+      <p class="sub">
+        You'll need Python 3.11 or newer and around 25 GB of free disk space. None of the data is in the
+        repository: download the three 2025 files from the
+        <a href="https://open.data.dvsa.gov.uk/mot-anonymised/index.html">DVSA's anonymised MOT data page</a>
+        and follow the <a href="https://github.com/JGit705/MOTIntel#run-it-yourself">full setup steps</a>.
+      </p>
+      <div class="card">
+<pre><code>git clone https://github.com/JGit705/MOTIntel.git
+cd MOTIntel
+python3 -m venv .venv
+./.venv/bin/pip install -r requirements.txt
+
+./.venv/bin/python -m motintel.run_pipeline
+./.venv/bin/python -m motintel.export
+./.venv/bin/streamlit run motintel_app.py</code></pre>
+      </div>
+    </section>
+
+    <!-- ================= caveats ================= -->
+    <section id="not">
+      <p class="eyebrow">Read with care</p>
+      <h2>What an MOT failure rate is not</h2>
+      <div class="card">
+        <p>
+          It isn't a reliability score. The MOT checks safety and emissions once a year, can't see anything
+          repaired in between, and reflects how a car was looked after as much as how it was built. This
+          project covers <b>2025 only</b>, so it can't show how a model changed from year to year. Fuel type
+          is unreliable for older hybrids, and the data has no repair costs.
+        </p>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <p>Code: <a href="https://github.com/JGit705/MOTIntel/blob/main/LICENSE">MIT licence</a>.</p>
+    <p>
+      Data: contains public sector information licensed under the
+      <a href="https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/">Open Government Licence v3.0</a>.
+      Source: <a href="https://open.data.dvsa.gov.uk/mot-anonymised/index.html">DVSA anonymised MOT testing data</a>.
+    </p>
+  </footer>
+
+</div>
+</body>
+</html>
