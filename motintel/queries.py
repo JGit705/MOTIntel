@@ -42,6 +42,16 @@ class VehicleProfile:
     top_defects: list[dict] = field(default_factory=list)
     by_mileage: list[dict] = field(default_factory=list)
     peers: list[dict] = field(default_factory=list)
+    # What the page's sections show, carried here so the summary can be asked
+    # to cover them — and can use nothing the reader cannot also see.
+    benchmark: float | None = None
+    severity: dict = field(default_factory=dict)
+    repair_areas: list = field(default_factory=list)
+    rank: tuple[int, int] | None = None
+    age_curve: list[dict] = field(default_factory=list)
+    # Layer three: what the statistics mean, decided by serving.findings in
+    # code rather than left for the model to conclude.
+    findings: dict = field(default_factory=dict)
 
     @property
     def is_sparse(self) -> bool:

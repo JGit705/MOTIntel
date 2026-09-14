@@ -16,6 +16,8 @@ from pathlib import Path
 import polars as pl
 from streamlit.testing.v1 import AppTest
 
+from motintel.ui import names
+
 ROOT = Path(__file__).resolve().parent.parent
 APP = ROOT / "motintel_app.py"
 DATA = ROOT / "data" / "processed"
@@ -56,13 +58,23 @@ def bands_for(make: str, model: str) -> list[int]:
             .sort("age_band")["age_band"].to_list())
 
 
-# Every page, not just the one the app opens on. The panels below the fold
-# were never being rendered: the harness drove the controls and read the
-# Overview, so a crash in any other section went unseen. Vehicles are dealt out
-# across the pages in blocks, which costs one extra rerun per block rather than
-# one per vehicle.
-PAGES = ["Overview", "Reliability", "Failure reasons", "Mileage analysis",
-         "Comparison"]
+def pick(at: AppTest, make: str, model: str) -> bool:
+    """Choose a car through the search box, the way a reader would. False if
+    the box does not offer it — which is a failure in its own right, since
+    the box is the only way to reach a car."""
+    box = at.selectbox(key="search")
+    if names.display_name(make, model) not in box.options:
+        return False
+    box.set_value((make, model)).run()
+    return at.session_state["car"] == (make, model)
+
+
+# The app is one page now, and every panel renders on it: Streamlit runs an
+# expander's body whether or not it is open, so a collapsed section is still
+# executed. Each vehicle therefore exercises all twelve panels rather than the
+# fifth of them that happened to be on the page it was dealt — the harness got
+# stricter by the app getting simpler, and there are no page blocks to deal
+# out any more.
 
 
 def check_ranking(at: AppTest) -> list[tuple[str, str, str]]:
@@ -70,16 +82,13 @@ def check_ranking(at: AppTest) -> list[tuple[str, str, str]]:
     the sample: a car that is in the table, one that is excluded from it for
     thin mileage coverage, and the oldest band, where the table is shortest."""
     failures = []
-    at.radio[0].set_value("Reliability").run()
     for make, model, band, note in [("FORD", "FIESTA", 12, "ranked"),
                                     ("AUDI", "R8", 12, "excluded, no coverage"),
                                     ("FORD", "FIESTA", 27, "oldest band")]:
         try:
-            at.selectbox[0].set_value(make).run()
-            if model not in at.selectbox[1].options:
+            if not pick(at, make, model):
                 failures.append((make, model, f"{note}: not selectable"))
                 continue
-            at.selectbox[1].set_value(model).run()
             if band in bands_for(make, model) and at.select_slider:
                 at.select_slider[0].set_value(band).run()
             if at.exception:
@@ -100,16 +109,13 @@ def check_defect_panels(at: AppTest) -> list[tuple[str, str, str]]:
     """
     from motintel import serving
     failures = []
-    at.radio[0].set_value("Failure reasons").run()
     labelled = serving.defect_labels() is not None
 
     for make, model in [("FORD", "FIESTA"), ("MAZDA", "MX-5")]:
         for band in bands_for(make, model):
             try:
-                at.selectbox[0].set_value(make).run()
-                if model not in at.selectbox[1].options:
+                if not pick(at, make, model):
                     break
-                at.selectbox[1].set_value(model).run()
                 if at.select_slider:
                     at.select_slider[0].set_value(band).run()
                 if at.exception:
@@ -122,22 +128,143 @@ def check_defect_panels(at: AppTest) -> list[tuple[str, str, str]]:
                 break
 
     # Whichever way the enrichment has gone, the page has to say something
-    # honest rather than render an empty card.
-    page = " ".join(m.value for m in at.markdown)
+    # honest rather than render an empty card. A panel's title is its
+    # expander's label now rather than a markdown card header, so both streams
+    # are read — checking only the markdown would have looked like the section
+    # had vanished.
+    page = " ".join([m.value for m in at.markdown]
+                    + [e.label for e in at.get("expander")])
+    # With the enrichment, the panels built on it have to be there.
     if labelled:
-        wanted = ("Where the failures are", "What to check when viewing")
-    else:
-        wanted = ("Where the failures are", "python -m motintel.enrich")
-    for phrase in wanted:
-        if phrase not in page:
-            failures.append(("MAZDA", "MX-5", f"page is missing {phrase!r}"))
+        for phrase in ("Where the failures are", "What to check before buying"):
+            if phrase not in page:
+                failures.append(("MAZDA", "MX-5",
+                                 f"page is missing {phrase!r}"))
+    # Whichever way it has gone, a reader is never handed a developer's
+    # command. The page used to tell them to run the enrichment themselves.
+    if "python -m motintel.enrich" in page:
+        failures.append(("MAZDA", "MX-5", "page shows a developer command"))
+    return failures
+
+
+# The questions the page is organised around, each a section heading with a
+# jump link pointing at it. One going missing is a question the page no longer
+# answers, and a jump link to nowhere.
+QUESTIONS = ["Is it reliable?", "What usually goes wrong?",
+             "Does age or mileage matter?", "How does it compare?",
+             "What should I do?"]
+# The only detail left behind a click.
+EXPANDERS = ["Every model ranked at this age", "Data & methodology"]
+# Words the page has stopped using. "Failure probability" reads as a
+# prediction for one car; "this car" claims the data is about the car being
+# viewed rather than about its model; the command belongs to a developer.
+BANNED = ["probability", "This car ", "this car ", "python -m motintel"]
+
+
+def check_sections(at: AppTest) -> list[tuple[str, str, str]]:
+    """Every question once, every remaining expander once, and none of the
+    retired wording anywhere on the page."""
+    page = " ".join(m.value for m in at.markdown)
+    labels = [e.label for e in at.get("expander")]
+    failures = []
+    for question in QUESTIONS:
+        hits = page.count(f">{question}<")
+        if hits != 1:
+            failures.append(("", "", f"question {question!r} appears {hits} "
+                                     f"times"))
+    for wanted in EXPANDERS:
+        hits = sum(1 for got in labels if wanted in got)
+        if hits != 1:
+            failures.append(("", "", f"expander {wanted!r} appears {hits} "
+                                     f"times"))
+    for anchor in ("overview", "failures", "age-mileage", "compare", "checks",
+                   "method"):
+        if f'id="{anchor}"' not in page or f'href="#{anchor}"' not in page:
+            failures.append(("", "", f"jump link #{anchor} has no target"))
+    for phrase in BANNED:
+        if phrase in page:
+            failures.append(("", "", f"page still says {phrase!r}"))
+    return failures
+
+
+def check_compare(at: AppTest) -> list[tuple[str, str, str]]:
+    """The comparison panel: one car beside it, three at once, a car never
+    tested at the page car's age, and the panel going away again when the
+    comparison is cleared."""
+    failures = []
+    for (make, model), others, band, note in [
+            (("FORD", "FIESTA"), [("VAUXHALL", "CORSA")], 12, "one car"),
+            (("FORD", "FIESTA"), [("VAUXHALL", "CORSA"),
+                                  ("VOLKSWAGEN", "GOLF"), ("TOYOTA", "YARIS")],
+             12, "three cars"),
+            (("FORD", "FIESTA"), [("TESLA", "MODEL 3 LONG RANGE AWD")], 12,
+             "car not tested at this age")]:
+        try:
+            if not pick(at, make, model):
+                failures.append((make, model, f"{note}: not selectable"))
+                continue
+            if band in bands_for(make, model) and at.select_slider:
+                at.select_slider[0].set_value(band).run()
+            box = at.multiselect(key="vs")
+            absent = [o for o in others
+                      if names.display_name(*o) not in box.options]
+            if absent:
+                failures.append((make, model, f"{note}: {absent} not offered"))
+                continue
+            box.set_value(others).run()
+            if at.exception:
+                failures.append((make, model, f"{note}: "
+                                 f"{at.exception[0].message.strip().splitlines()[-1]}"))
+                continue
+            header = (f"{names.display_name(make, model)} vs "
+                      + ", ".join(names.display_name(*o) for o in others))
+            if not any(header in m.value for m in at.markdown):
+                failures.append((make, model, f"{note}: no comparison panel"))
+        except Exception as e:
+            failures.append((make, model, f"{note}: {type(e).__name__}: {e}"))
+
+    try:
+        at.multiselect(key="vs").set_value([]).run()
+        if any(" vs " in m.value and "card-h" in m.value for m in at.markdown):
+            failures.append(("", "", "comparison still shown once cleared"))
+    except Exception as e:
+        failures.append(("", "", f"clearing the comparison: {e}"))
+    return failures
+
+
+def check_links() -> list[tuple[str, str, str]]:
+    """A shared link opens on what it names; links in the shapes they took
+    before — a make on its own, a single vs_make/vs_model pair — still open
+    somewhere sensible; and a link naming nothing real falls back to the
+    default rather than failing."""
+    failures = []
+    for params, car, age, vs in [
+            ({"make": "TOYOTA", "model": "YARIS", "age": "6",
+              "vs": "FORD|FIESTA"},
+             ("TOYOTA", "YARIS"), 6, [("FORD", "FIESTA")]),
+            ({"make": "TOYOTA", "vs_make": "FORD", "vs_model": "FOCUS"},
+             ("TOYOTA", "YARIS"), None, [("FORD", "FOCUS")]),
+            ({"make": "NOPE", "model": "NOPE", "age": "x", "vs": "NOPE|NOPE"},
+             ("FORD", "FIESTA"), None, [])]:
+        try:
+            at = AppTest.from_file(str(APP), default_timeout=90)
+            for key, value in params.items():
+                at.query_params[key] = value
+            at.run()
+            got = (at.session_state["car"],
+                   at.select_slider[0].value if age is not None else None,
+                   at.multiselect(key="vs").value)
+            if at.exception or got != (car, age, vs):
+                failures.append(("", "", f"link {params}: opened on {got}"))
+        except Exception as e:
+            failures.append(("", "", f"link {params}: {type(e).__name__}: {e}"))
     return failures
 
 
 def run() -> int:
     cases = vehicles()
-    print(f"running the real app against {len(cases)} vehicles "
-          f"across {len(PAGES)} pages")
+    print(f"running the real app against {len(cases)} vehicles, "
+          f"every panel on each")
     failures = []
     at = AppTest.from_file(str(APP), default_timeout=90)
     at.run()
@@ -145,18 +272,11 @@ def run() -> int:
         print(f"  cold start raised: {at.exception[0].message}")
         return 1
 
-    block = max(1, len(cases) // len(PAGES))
-    for i, (make, model) in enumerate(cases):
-        page = PAGES[min(i // block, len(PAGES) - 1)]
-        if at.radio[0].value != page:
-            at.radio[0].set_value(page).run()
+    for make, model in cases:
         try:
-            at.selectbox[0].set_value(make).run()
-            opts = at.selectbox[1].options
-            if model not in opts:
-                failures.append((make, model, "model missing from dropdown"))
+            if not pick(at, make, model):
+                failures.append((make, model, "missing from the car search"))
                 continue
-            at.selectbox[1].set_value(model).run()
             if at.exception:
                 failures.append((make, model, at.exception[0].message.strip()
                                  .splitlines()[-1]))
@@ -180,8 +300,11 @@ def run() -> int:
         except Exception as e:  # harness-level problem, still a failure
             failures.append((make, model, f"{type(e).__name__}: {e}"))
 
+    failures += check_sections(at)
     failures += check_ranking(at)
     failures += check_defect_panels(at)
+    failures += check_compare(at)
+    failures += check_links()
 
     print(f"\nfailures: {len(failures)}")
     for f in failures[:15]:

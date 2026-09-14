@@ -240,14 +240,15 @@ def run() -> int:
             if spent >= BUDGET:
                 break
             profile = serving.build_profile(make, model, age_band)
-            if llm.cached_summary(profile) is not None:
+            if llm.cached_insight(profile) is not None:
                 continue
-            summary = llm.summarise(profile)
+            insight = llm.interpret(profile)
             spent += 1
-            if summary is None:
+            if insight is None:
                 print(f"  generation stopped at {make} {model} — API "
                       f"unavailable")
                 break
+            summary = llm.insight_text(insight)
             cases.append({"vehicle": f"{make} {model}",
                           "age_years": age_band + 1,
                           "n_tests": profile.n_tests,
@@ -289,7 +290,7 @@ def run() -> int:
     answered, dense_total = counted("dense", "declined a")
 
     covered = sum(1 for make, model, age_band, _ in wanted
-                  if llm.cached_summary(
+                  if llm.cached_insight(
                       serving.build_profile(make, model, age_band)) is not None)
     report = {
         "summaries_measured": len(cases),

@@ -10,6 +10,8 @@ so what is tested here is what a reader actually gets.
 """
 from __future__ import annotations
 
+import json
+
 from dotenv import load_dotenv
 
 from motintel import llm, serving
@@ -25,9 +27,11 @@ def show(make: str, model: str, band: int, label: str) -> None:
     profile = serving.build_profile(make, model, band)
     print("\n--- DATA BLOCK GIVEN TO THE MODEL (its entire world) ---")
     print(llm.render_data_block(profile))
-    print("\n--- SUMMARY ---")
-    summary = llm.summarise(profile)
-    print(summary if summary else "[LLM layer unavailable — app would degrade]")
+    print("\n--- INTERPRETATION ---")
+    insight = llm.interpret(profile)
+    print(json.dumps(insight, indent=2) if insight
+          else "[unavailable, or the answer failed its checks — app would "
+               "degrade]")
     print()
 
 

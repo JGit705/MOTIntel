@@ -11,6 +11,8 @@ which does not ship.
 """
 from __future__ import annotations
 
+import math
+from dataclasses import replace
 from functools import lru_cache
 
 import polars as pl
@@ -22,7 +24,9 @@ __all__ = ["MIN_TESTS_FOR_CONFIDENCE", "build_profile", "tables",
            "selectable_vehicles", "age_bands", "mileage_curve",
            "mileage_label", "benchmark_for", "peers_for",
            "reliability_ranking", "RANKING_COLUMNS", "defect_labels",
-           "is_sparse"]
+           "is_sparse", "severity_shares", "repair_area_shares",
+           "ranking_position", "mileage_step", "findings",
+           "defect_short_labels"]
 
 # Everything past this is pooled, so the tail does not become a row of
 # single-test noise.
@@ -75,6 +79,18 @@ def defect_labels() -> pl.DataFrame | None:
     return pl.read_parquet(path).select(
         "defect_category", "defect_desc", "plain_english", "repair_area",
         "effort", "forecourt_check")
+
+
+@lru_cache(maxsize=1)
+def defect_short_labels() -> pl.DataFrame | None:
+    """Two-part short names for each failure reason, for table rows — "Deep
+    tyre cut" / "Structural cords exposed" — or None if short_labels has not
+    been run. The page falls back to the plain-English sentence."""
+    path = PROCESSED / "defect_short.parquet"
+    if not path.exists():
+        return None
+    return pl.read_parquet(path).select("defect_category", "defect_desc",
+                                        "headline", "detail")
 
 
 def selectable_vehicles() -> pl.DataFrame:
@@ -238,6 +254,144 @@ def reliability_ranking(age_band: int) -> pl.DataFrame:
                     "margin", "coverage"))
 
 
+def severity_shares(make: str, model: str, age_band: int, n_tests: int,
+                    failure_rate: float | None) -> dict[str, float]:
+    """Shares of failed tests carrying a Dangerous or a Major defect.
+
+    Of failed tests, not of all tests — the question is how bad the failures
+    are, given that it failed. One test can carry both, so the two overlap.
+    Lived in the app until the summary needed the same figures; two copies is
+    how the page and the model come to disagree.
+    """
+    if not n_tests or failure_rate is None:
+        return {}
+    rows = tables()["severity"].filter(
+        (pl.col("make") == make) & (pl.col("model") == model)
+        & (pl.col("age_band") == age_band))
+    failed = max(1, round(n_tests * failure_rate))
+    shares: dict[str, float] = {}
+    for grade in ("Dangerous", "Major"):
+        hit = rows.filter(pl.col("deficiency_category") == grade)
+        if not hit.is_empty():
+            shares[grade] = min(1.0, int(hit["n_tests"][0]) / failed)
+    return shares
+
+
+def repair_area_shares(top_defects: list[dict]) -> list[tuple[str, float]]:
+    """Where the ten commonest failure reasons fall, by the part of the car a
+    buyer thinks in, largest first.
+
+    A share of those ten reasons by test count, not of tests: summing per-defect
+    counts double-counts a test with two defects in the same area, and nothing
+    at this grain can undo that. Empty until the enrichment has labelled the
+    defects.
+    """
+    totals: dict[str, int] = {}
+    for d in top_defects:
+        if d.get("repair_area"):
+            totals[d["repair_area"]] = (totals.get(d["repair_area"], 0)
+                                        + d["n_tests"])
+    whole = sum(totals.values())
+    if not whole:
+        return []
+    return sorted(((area, n / whole) for area, n in totals.items()),
+                  key=lambda t: -t[1])
+
+
+def ranking_position(age_band: int, make: str,
+                     model: str) -> tuple[int, int] | None:
+    """(position, out of) in the mileage-levelled ranking, 1 the lowest
+    failure rate — or None when the model is not fairly rankable at that age."""
+    ranked = reliability_ranking(age_band)
+    hit = (ranked.with_row_index("i")
+           .filter((pl.col("make") == make) & (pl.col("model") == model)))
+    return None if hit.is_empty() else (int(hit["i"][0]) + 1, len(ranked))
+
+
+def mileage_step(by_mileage: list[dict]) -> dict | None:
+    """The steepest rise in failure rate between consecutive mileage bands —
+    the point at which this model starts costing money — or None when no step
+    is sharp enough to be worth pointing at.
+
+    Two points' rise in one band is the floor. Below it the "sharpest step" is
+    just the largest of several similar ones, and naming a threshold would
+    claim a pattern the curve does not have.
+    """
+    if len(by_mileage) <= 2:
+        return None
+    step, i = max(((by_mileage[i]["failure_rate"]
+                    - by_mileage[i - 1]["failure_rate"], i)
+                   for i in range(1, len(by_mileage))), key=lambda t: t[0])
+    if step <= 0.02:
+        return None
+    return {"after": by_mileage[i]["mileage_band"],
+            "rate": by_mileage[i]["failure_rate"], "step": step,
+            "top_band": by_mileage[-1]["mileage_band"],
+            "top_rate": by_mileage[-1]["failure_rate"]}
+
+
+# Within this fraction of the all-cars average counts as about average. The
+# verdict, the summary and the checklist priorities all read this one value.
+AVERAGE_BAND = 0.10
+
+
+def findings(p: VehicleProfile) -> dict:
+    """Layer three — what the statistics mean, decided in code.
+
+    Everything the page states as a judgement comes from here: better or worse
+    than average, how far to trust the sample, where the failures concentrate,
+    whether mileage has a threshold, where age helps or hurts. The model is
+    handed these and asked to interpret them, never to reach them itself — so
+    the verdict on the page and the verdict in the AI's words cannot differ.
+    """
+    out: dict = {}
+    if p.failure_rate is None or not p.n_tests:
+        return out
+    if p.benchmark:
+        ratio = p.failure_rate / p.benchmark
+        out["classification"] = ("better" if ratio < 1 - AVERAGE_BAND
+                                 else "worse" if ratio > 1 + AVERAGE_BAND
+                                 else "about")
+        out["gap_pp"] = round(round(p.failure_rate * 100, 1)
+                              - round(p.benchmark * 100, 1), 1)
+
+    # The 95% margin of error of the rate itself. "Large sample" is otherwise
+    # an adjective someone picked; this makes it a statement about how far the
+    # figure could move.
+    margin = 1.96 * math.sqrt(p.failure_rate * (1 - p.failure_rate)
+                              / p.n_tests) * 100
+    out["margin_pp"] = margin
+    out["sample"] = ("small" if p.is_sparse or margin > 3
+                     else "moderate" if margin > 1 else "large")
+
+    if p.repair_areas:
+        out["dominant_area"] = p.repair_areas[0]
+    step = mileage_step(p.by_mileage)
+    if step:
+        out["mileage"] = step
+
+    # Age bands compared only where this model has enough tests to say so.
+    solid = [a for a in p.age_curve if a["all_cars"] is not None
+             and a["n_tests"] >= MIN_TESTS_FOR_CONFIDENCE]
+    out["age_better"] = [a["age_band"] for a in solid
+                         if round(a["failure_rate"] * 100, 1)
+                         < round(a["all_cars"] * 100, 1)]
+    out["age_worse"] = [a["age_band"] for a in solid
+                        if round(a["failure_rate"] * 100, 1)
+                        > round(a["all_cars"] * 100, 1)]
+
+    if p.rank:
+        position, total = p.rank
+        out["rank_better_than"] = round(100 * (total - position) / total)
+
+    graded = [d for d in p.top_defects if d.get("dangerous_share") is not None]
+    if graded:
+        out["mostly_dangerous"] = [d["plain_english"] or d["defect"]
+                                   for d in graded
+                                   if d["dangerous_share"] >= 0.5]
+    return out
+
+
 def build_profile(make: str, model: str, age_band: int) -> VehicleProfile:
     """The single definition of what one vehicle selection contains.
 
@@ -266,24 +420,54 @@ def build_profile(make: str, model: str, age_band: int) -> VehicleProfile:
     if labels is not None:
         defects = defects.join(labels, on=["defect_category", "defect_desc"],
                                how="left")
+    shorts = defect_short_labels()
+    if shorts is not None:
+        defects = defects.join(shorts, on=["defect_category", "defect_desc"],
+                               how="left")
     top = [{"category": r["defect_category"], "defect": r["defect_desc"],
             "n_tests": r["n_tests"], "share_of_tests": r["share_of_tests"],
             "plain_english": r.get("plain_english"),
             "repair_area": r.get("repair_area"), "effort": r.get("effort"),
-            "forecourt_check": r.get("forecourt_check")}
+            "forecourt_check": r.get("forecourt_check"),
+            "headline": r.get("headline"), "detail": r.get("detail"),
+            # How often this reason was graded Dangerous where it appeared.
+            # None on a Parquet exported before the column existed, which the
+            # page reads as "not recorded" rather than as zero.
+            "dangerous_share": (r["n_dangerous"] / r["n_tests"]
+                                if r.get("n_dangerous") is not None
+                                and r["n_tests"] else None)}
            for r in defects.to_dicts()]
 
     miles = [{"mileage_band": mileage_label(r["band"]), "n_tests": r["n_tests"],
               "failure_rate": r["failure_rate"]}
              for r in mileage_curve(make, model).to_dicts()]
 
-    return VehicleProfile(
+    n_tests = int(row["n_tests"][0])
+    failure_rate = float(row["failure_rate"][0])
+
+    # This model at every age it was tested, beside all cars at that age —
+    # the figures the "as the car ages" chart is drawn from.
+    curve = (t["age_curve"]
+             .filter((pl.col("make") == make) & (pl.col("model") == model))
+             .join(t["benchmark"].select("age_band", all_cars="failure_rate"),
+                   on="age_band", how="left")
+             .sort("age_band"))
+    ages = [{"age_band": f"{r['age_band']}-{r['age_band'] + 3}",
+             "n_tests": r["n_tests"], "failure_rate": r["failure_rate"],
+             "all_cars": r["all_cars"]} for r in curve.to_dicts()]
+
+    profile = VehicleProfile(
         make=make, model=model, age_years=age_band + 1,
         age_band=(age_band, age_band + 3),
-        n_tests=int(row["n_tests"][0]),
-        failure_rate=float(row["failure_rate"][0]),
+        n_tests=n_tests, failure_rate=failure_rate,
         top_defects=top, by_mileage=miles,
-        peers=peers_for(age_band, make, model))
+        peers=peers_for(age_band, make, model),
+        benchmark=benchmark_for(age_band),
+        severity=severity_shares(make, model, age_band, n_tests, failure_rate),
+        repair_areas=repair_area_shares(top),
+        rank=ranking_position(age_band, make, model),
+        age_curve=ages)
+    return replace(profile, findings=findings(profile))
 
 
 def is_sparse(profile: VehicleProfile) -> bool:
