@@ -899,10 +899,17 @@ def panel_compare() -> None:
             for r in here[1:]:
                 lower, both = shared_bands(r[0], r[1])
                 if both:
-                    lead += (f" Across the {both} age bands both were tested "
-                             f"at, the {escape(model_name)} had the lower rate "
-                             f"in {lower}" + (" — all of them." if lower == both
-                                              else "."))
+                    # Named, because with two rivals an unnamed "both" could
+                    # be either of them.
+                    versus = (f" Against the {called(r)}, the "
+                              f"{escape(model_name)}")
+                    lead += (f"{versus} had the lower rate in all {both} age "
+                             f"bands both were tested at." if lower == both
+                             else f"{versus} never had the lower rate across "
+                                  f"the {both} age bands both were tested at."
+                             if lower == 0
+                             else f"{versus} had the lower rate in {lower} of "
+                                  f"the {both} age bands both were tested at.")
                 if serving.is_sparse(r[3]):
                     lead += (f" Only {r[3].n_tests:,} {called(r)} tests at "
                              f"this age, so treat its figures with caution.")
