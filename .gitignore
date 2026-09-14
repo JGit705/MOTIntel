@@ -20,5 +20,11 @@ dist/
 venv/
 .ipynb_checkpoints/
 
+# Personal working notes and local tool config — kept on disk, never published
+HANDOVER.md
+AI_PLAN.md
+BACKLOG.md
+.claude/
+
 # OS
 .DS_Store

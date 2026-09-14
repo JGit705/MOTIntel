@@ -1,4 +1,4 @@
-"""Phase 2 of AI_PLAN — what a valid set of defect labels looks like.
+"""What a valid set of defect labels looks like.
 
 Kept apart from enrich.py deliberately. That module knows how to get labels out
 of a model; this one knows what makes them acceptable, and the two should be

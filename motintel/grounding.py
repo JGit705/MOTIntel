@@ -1,6 +1,6 @@
 """What it means for a summary to be grounded, in one place.
 
-Phase 4 of AI_PLAN. Both the grounding test and the evaluation harness read
+Both the grounding test and the evaluation harness read
 this, so there is one definition of "traces to the data" rather than two that
 drift — the same seam as defect_labels.py, for the same reason.
 

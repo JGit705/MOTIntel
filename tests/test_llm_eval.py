@@ -1,4 +1,4 @@
-"""Phase 4 of AI_PLAN — measuring the AI layer instead of asserting it.
+"""Measuring the AI layer instead of asserting it.
 
 "Grounded by design" is an architecture claim. This turns it into a number:
 how many figures across how many summaries could not be traced back to the data

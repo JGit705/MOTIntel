@@ -1,4 +1,4 @@
-"""Phase 2 of AI_PLAN — the page the labels are read on before they ship.
+"""The page the labels are read on before they ship.
 
 The machine checks in defect_labels.py catch what a schema and a regex can see:
 a missing row, a label outside its closed set, a figure that was not in the

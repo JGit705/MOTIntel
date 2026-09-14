@@ -1,4 +1,4 @@
-"""Phase 1 of AI_PLAN — the LLM as a pipeline stage, not a page feature.
+"""The LLM as a pipeline stage, not a page feature.
 
 The MOT extracts describe a failure as a category plus a sentence fragment:
 "Lamps, reflectors and electrical equipment" / "not working". There are 510
@@ -528,7 +528,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  {problem}")
         if len(problems) > 20:
             print(f"  ...and {len(problems) - 20} more")
-        print("nothing written — see AI_PLAN phase 2")
+        print("nothing written — see motintel/defect_labels.py")
         return 1
 
     table.write_parquet(OUTPUT, compression="zstd")
